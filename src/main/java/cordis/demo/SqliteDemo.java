@@ -1,8 +1,8 @@
 package cordis.demo;
 
+import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
-import cordis.core.Registry;
 import cordis.sqlite.SqlitePlugin;
 import cordis.sqlite.SqliteService;
 
@@ -22,12 +22,12 @@ import java.util.Map;
  * 运行方式：
  *   mvn compile
  *   java -cp "target/classes:$HOME/.m2/repository/org/xerial/sqlite-jdbc/3.21.0.1/sqlite-jdbc-3.21.0.1.jar" \
- *        cordis.sqlite.SqliteDemo
+ *        cordis.demo.SqliteDemo
  */
 public class SqliteDemo {
 
     /** 数据访问组件：声明依赖 sqlite（声明在 use() 的 inject 参数里，见 main） */
-    static final Registry.Component USER_REPO = (ctx, config) -> {
+    static final Component USER_REPO = (ctx, config) -> {
         SqliteService db = ctx.get("sqlite");
         System.out.println("[user-repo] started with " + db);
 

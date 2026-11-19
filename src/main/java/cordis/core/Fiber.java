@@ -35,7 +35,7 @@ public class Fiber {
     /** 插件名（对应 runtime.name） */
     public final String name;
     /** 插件主体（对应 runtime.callback） */
-    public final Registry.Component component;
+    public final Component component;
     /** 插件配置（对应 config） */
     public final Map<String, Object> config;
     /** 声明的依赖：服务名 -> 要求（对应 inject） */
@@ -44,7 +44,7 @@ public class Fiber {
     public FiberState state = FiberState.PENDING;
 
     /** 本 fiber 的运行时登记信息（对应 runtime），根 fiber 为 null */
-    private final Registry.Runtime runtime;
+    private final Runtime runtime;
     /** 本 fiber 提供的服务（对应 provisions），卸载时随之撤销 */
     final List<Service> provisions = new ArrayList<>();
     /** 本 fiber 收集的所有可逆 effect（对应 _disposables） */
@@ -69,7 +69,7 @@ public class Fiber {
     }
 
     /** 插件 fiber，对应 Fiber 构造函数中 runtime != null 的分支 */
-    Fiber(Context parent, Registry.Runtime runtime,
+    Fiber(Context parent, Runtime runtime,
           Map<String, Object> config, Map<String, Object> inject) {
         this.ctx = parent.extend();
         ctx.setFiber(this);

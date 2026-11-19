@@ -23,32 +23,14 @@ import java.util.Map;
  */
 public class EventsService {
 
-    /** 对应 Hook 的 callback：可变参数的监听器 */
-    public interface Listener {
-        Object invoke(Object... args);
-    }
-
-    /** 对应 Hook：一个带所属上下文的监听器 */
-    private static class Hook {
-        /** 注册监听器时的上下文（对应 hook.ctx）；TS 中用于 isolate 过滤，本范例保留备查 */
-        @SuppressWarnings("unused")
-        final Context owner;
-        final Listener callback;
-        boolean removed;
-
-        Hook(Context owner, Listener callback) {
-            this.owner = owner;
-            this.callback = callback;
-        }
-    }
-
     private final Map<String, List<Hook>> hooks = new LinkedHashMap<>();
 
     /**
      * 对应 on()：注册监听器并返回 Disposable。
-     * 监听器注册为调用方所在 fiber 的 effect，fiber 卸载时自动解绑。
+     * 监听器包装为 {@link Hook}，并注册为调用方所在 fiber 的 effect，
+     * fiber 卸载时自动解绑。
      */
-    public Disposable on(Context caller, String name, Listener listener) {
+    public Disposable on(Context caller, String name, EventListener listener) {
         return caller.fiber().effect(() -> {
             Hook hook = new Hook(caller, listener);
             hooks.computeIfAbsent(name, k -> new ArrayList<>()).add(hook);
@@ -57,7 +39,7 @@ public class EventsService {
     }
 
     /** 对应 once()：先移除自身，再执行监听器 */
-    public Disposable once(Context caller, String name, Listener listener) {
+    public Disposable once(Context caller, String name, EventListener listener) {
         Disposable[] handle = new Disposable[1];
         handle[0] = on(caller, name, args -> {
             handle[0].dispose();

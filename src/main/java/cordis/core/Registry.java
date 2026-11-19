@@ -7,37 +7,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 对应 packages/core/src/registry.ts。
+ * 对应 packages/core/src/registry.ts 的 RegistryService。
  *
- * Component（组件/插件）是 cordis 的最小复用单元：接收 (ctx, config)，
- * 在 apply 中完成初始化——注册服务、监听事件、创建 effect——并可选地返回
- * 一个清理函数（对应 TS 中插件返回 Disposable 或 AsyncDisposable）。
+ * Registry 负责“定义 → 实例”的装配：组件（{@link Component}）第一次被
+ * use() 时建立运行时档案（{@link Runtime}），每次 use() 产生一根
+ * 新的 {@link Fiber} 并登记进档案。
  *
- * 对应 TS 的 Component.Function / Component.Constructor / Component.Object
- * 三种形态，Java 用单一函数式接口 + 类实现来覆盖。
+ * 服务出现/消失时，由本类唤醒 inject 中声明了该服务的 fiber
+ * （对应 TS 的 reflect.notify / internal/service 事件）。
  */
 public class Registry {
 
-    /** 对应 Component：{@code (ctx, config) => Disposable | void} */
-    @FunctionalInterface
-    public interface Component {
-        Disposable apply(Context ctx, Map<String, Object> config);
-    }
-
-    /** 对应 Component.Runtime：一个组件的运行时登记信息与其全部实例 */
-    static class Runtime {
-        final String name;
-        final Component callback;
-        final List<Fiber> fibers = new ArrayList<>();
-
-        Runtime(String name, Component callback) {
-            this.name = name;
-            this.callback = callback;
-        }
-    }
-
     private final Context ctx;
-    /** 组件 -> 运行时（对应 _internal：Map&lt;Function, Component.Runtime&gt;） */
+    /** 组件 -> 运行时档案（对应 _internal：Map&lt;Function, Component.Runtime&gt;） */
     private final Map<Component, Runtime> internal = new LinkedHashMap<>();
     private int counter = 0;
 

@@ -3,11 +3,10 @@ package cordis.demo;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
-import cordis.core.Registry;
 import cordis.core.Service;
-import cordis.core.Registry.Component;
 
 /**
  * 演示 cordis 的典型用法，展示改写后的 Java 版本如何还原原框架的行为：
@@ -22,7 +21,7 @@ import cordis.core.Registry.Component;
  *
  * 运行方式：
  *   mvn compile
- *   java -cp target/classes cordis.core.Demo
+ *   java -cp target/classes cordis.demo.Demo
  */
 public class Demo {
 
@@ -45,8 +44,8 @@ public class Demo {
         }
     }
 
-    /** 数据库插件，对应 Registry.Component */
-    static final Registry.Component DATABASE = (ctx, config) -> {
+    /** 数据库插件，对应 Component */
+    static final Component DATABASE = (ctx, config) -> {
         String url = (String) config.getOrDefault("url", "sqlite://demo.db");
         DatabaseService db = new DatabaseService(ctx, url);
         System.out.println("[database] connection opened: " + url);
@@ -62,7 +61,7 @@ public class Demo {
     };
 
     /** 服务器插件：声明依赖 database */
-    static final Registry.Component SERVER = (ctx, config) -> {
+    static final Component SERVER = (ctx, config) -> {
         DatabaseService db = ctx.get("database");
         System.out.println("[server] started, resolving database -> " + db);
 

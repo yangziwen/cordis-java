@@ -96,12 +96,12 @@ public class Context {
      * 对应 ctx.events.on()：在共享的 EventsService 上注册监听器，
      * 但以“本上下文所在的 fiber”为 effect 宿主（对应 Proxy 绑定的 thisArg）。
      */
-    public Disposable on(String name, EventsService.Listener listener) {
+    public Disposable on(String name, EventListener listener) {
         return events.on(this, name, listener);
     }
 
     /** 对应 ctx.events.once() */
-    public Disposable once(String name, EventsService.Listener listener) {
+    public Disposable once(String name, EventListener listener) {
         return events.once(this, name, listener);
     }
 

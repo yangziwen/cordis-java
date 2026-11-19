@@ -1,8 +1,8 @@
 package cordis.sqlite;
 
+import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
-import cordis.core.Registry;
 
 import java.util.Map;
 
@@ -14,7 +14,7 @@ import java.util.Map;
  * 2. ping() 自检 —— 失败则 fiber 进入 FAILED，而非静默半加载；
  * 3. 返回清理函数 —— fiber 卸载时关闭 JDBC 连接（effect 的 teardown）。
  */
-public class SqlitePlugin implements Registry.Component {
+public class SqlitePlugin implements Component {
 
     public static final SqlitePlugin INSTANCE = new SqlitePlugin();
 
