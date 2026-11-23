@@ -1,13 +1,13 @@
 package cordis.demo;
 
+import java.util.Map;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
 import cordis.sqlite.SqlitePlugin;
 import cordis.sqlite.SqliteService;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
+import cordis.util.Maps;
 
 /**
  * SQLite 服务的完整演示，重点展示 cordis 的依赖驱动生命周期：
@@ -41,24 +41,17 @@ public class SqliteDemo {
         return null;
     };
 
-    /** Java 8 兼容的 map 构造辅助，允许 null 值 */
-    static Map<String, Object> map(Object... kv) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
-        return m;
-    }
-
     public static void main(String[] argv) {
         Context root = Context.root();
 
         // 1. 先加载数据访问组件：sqlite 服务尚不存在 → 停在 PENDING
         Fiber repoFiber = root.registry.use("user-repo", USER_REPO,
-                map(), map("sqlite", null));
+                Maps.of(), Maps.of("sqlite", null));
         System.out.println("repoFiber = " + repoFiber);
 
         // 2. 加载 SQLite 插件（内存库）→ 服务注册 → repo 自动激活
         Fiber dbFiber = root.registry.use("sqlite", SqlitePlugin.INSTANCE,
-                map("url", "jdbc:sqlite::memory:"), map());
+                Maps.of("url", "jdbc:sqlite::memory:"), Maps.of());
         System.out.println("dbFiber   = " + dbFiber);
         System.out.println("repoFiber = " + repoFiber + "\n");
 
@@ -93,7 +86,7 @@ public class SqliteDemo {
         //    注意：新的 :memory: 连接是全新的空库——连接即库，这正是服务随 fiber 生灭的体现
         System.out.println("\n-- registry.use(\"sqlite\") again --");
         root.registry.use("sqlite", SqlitePlugin.INSTANCE,
-                map("url", "jdbc:sqlite::memory:"), map());
+                Maps.of("url", "jdbc:sqlite::memory:"), Maps.of());
         System.out.println("repoFiber = " + repoFiber);
         System.out.println("root.has(\"sqlite\") = " + root.has("sqlite"));
     }

@@ -4,9 +4,7 @@ import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
 import cordis.core.Service;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
+import cordis.util.Maps;
 
 /**
  * 多租户隔离演示：在裸隔离上下文上继续派生并 use() 插件。
@@ -59,13 +57,6 @@ public class TenantDemo {
         return null;
     };
 
-    /** Java 8 兼容的 map 构造辅助，允许 null 值 */
-    static Map<String, Object> map(Object... kv) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
-        return m;
-    }
-
     public static void main(String[] argv) {
         Context root = Context.root();
 
@@ -74,10 +65,10 @@ public class TenantDemo {
         Context tenant2 = root.isolate("database");
 
         // 直接在裸上下文上 use()（显式传 caller）：fiber 的 ctx 是隔离上下文的子节点
-        Fiber db1 = tenant1.registry.use(tenant1, "db1", DATABASE, map("url", "tenant1://ds1"), map());
-        Fiber repo1 = tenant1.registry.use(tenant1, "repo1", REPO, map(), map("database", null));
-        Fiber db2 = tenant2.registry.use(tenant2, "db2", DATABASE, map("url", "tenant2://ds2"), map());
-        Fiber repo2 = tenant2.registry.use(tenant2, "repo2", REPO, map(), map("database", null));
+        Fiber db1 = tenant1.registry.use(tenant1, "db1", DATABASE, Maps.of("url", "tenant1://ds1"), Maps.of());
+        Fiber repo1 = tenant1.registry.use(tenant1, "repo1", REPO, Maps.of(), Maps.of("database", null));
+        Fiber db2 = tenant2.registry.use(tenant2, "db2", DATABASE, Maps.of("url", "tenant2://ds2"), Maps.of());
+        Fiber repo2 = tenant2.registry.use(tenant2, "repo2", REPO, Maps.of(), Maps.of("database", null));
 
         System.out.println();
         System.out.println("db1=" + db1 + "  repo1=" + repo1);
@@ -94,7 +85,7 @@ public class TenantDemo {
 
         // 租户1恢复：repo1 自动复活
         System.out.println("\n-- tenant1 重新加载数据库 --");
-        tenant1.registry.use(tenant1, "db1", DATABASE, map("url", "tenant1://ds1-backup"), map());
+        tenant1.registry.use(tenant1, "db1", DATABASE, Maps.of("url", "tenant1://ds1-backup"), Maps.of());
         System.out.println("repo1 = " + repo1);
 
         // 清理剩余插件

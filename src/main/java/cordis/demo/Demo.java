@@ -1,12 +1,10 @@
 package cordis.demo;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
 import cordis.core.Service;
+import cordis.util.Maps;
 
 /**
  * 演示 cordis 的典型用法，展示改写后的 Java 版本如何还原原框架的行为：
@@ -72,25 +70,18 @@ public class Demo {
         return null;
     };
 
-    /** Java 8 兼容的 map 构造辅助（对应 Map.of），允许 null 值 */
-    static Map<String, Object> map(Object... kv) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
-        return m;
-    }
-
     public static void main(String[] argv) {
         // 1. 根上下文
         Context root = Context.root();
 
         // 2. 加载数据库插件
         Fiber dbFiber = root.registry.use("database", DATABASE,
-                map("url", "mysql://prod:3306/app"), map());
+                Maps.of("url", "mysql://prod:3306/app"), Maps.of());
         System.out.println("dbFiber = " + dbFiber);
 
         // 3. 加载服务器插件：inject 声明依赖 database
         Fiber serverFiber = root.registry.use("server", SERVER,
-                map(), map("database", null));
+                Maps.of(), Maps.of("database", null));
         System.out.println("serverFiber = " + serverFiber + "\n");
 
         // 4a. emit：广播事件，两个插件的监听器都被调用
@@ -139,7 +130,7 @@ public class Demo {
 
         // 6. 重新加载数据库插件：服务器插件自动恢复
         System.out.println("\n-- registry.use(\"database\") again --");
-        root.registry.use("database", DATABASE, map("url", "sqlite://backup.db"), map());
+        root.registry.use("database", DATABASE, Maps.of("url", "sqlite://backup.db"), Maps.of());
         System.out.println("serverFiber = " + serverFiber);
 
         System.out.println("\n-- emit(\"request\") after reload --");
