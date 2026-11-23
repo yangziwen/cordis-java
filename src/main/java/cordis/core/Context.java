@@ -65,8 +65,18 @@ public class Context {
         return new Context(null);
     }
 
+    /**
+     * 本上下文当前对应的 fiber（对应 ctx.fiber）。
+     * 与 TS 的原型链解析一致：裸派生上下文（extend/isolate/intercept 产生、
+     * 尚未在上面 use() 过插件）没有自己的 fiber，沿 parent 链解析到最近的
+     * 祖先 fiber——效果、服务的 provisions 都归属祖先，最终篏底到根上下文
+     * 自带的 fiber，因此正常情况下永不为 null。
+     */
     public Fiber fiber() {
-        return fiber;
+        for (Context c = this; c != null; c = c.parent) {
+            if (c.fiber != null) return c.fiber;
+        }
+        return null; // 理论上不可达：根上下文构造时必有 fiber
     }
 
     void setFiber(Fiber fiber) {
@@ -127,7 +137,9 @@ public class Context {
             throw new IllegalStateException("service \"" + name
                     + "\" has been registered at <" + prev.ctx.fiber().name + ">");
         }
-        Fiber current = this.fiber;
+        // 裸上下文上构造的服务沿父链归属到祖先 fiber 的 provisions
+        // （对应 TS 原型链解析出的 ctx.fiber）
+        Fiber current = fiber();
         if (current != null) current.provisions.add(service);
         if (current == null || current.state == FiberState.ACTIVE) {
             registry.onServiceChanged(name);
