@@ -98,9 +98,9 @@ public class Fiber {
             this.epochActive = true;
             this.refresh();
             return () -> {
-            this.epochActive = false;
-            this.unload();
-            this.state = FiberState.DISPOSED;
+                this.epochActive = false;
+                this.unload();
+                this.state = FiberState.DISPOSED;
             };
         }, "registry.use(" + name + ")");
     }

@@ -77,7 +77,7 @@ public class TenantDemo {
 
         // 编排层等待两个租户的全部 fiber 就绪（对应 await fiber）
         Promise.all(root.scheduler, Arrays.asList(
-                db1.ready(), repo1.ready(), db2.ready(), repo2.ready())).join();
+                db1.await(), repo1.await(), db2.await(), repo2.await())).join();
 
         System.out.println();
         System.out.println("db1=" + db1 + "  repo1=" + repo1);

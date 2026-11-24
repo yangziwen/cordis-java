@@ -66,8 +66,8 @@ public class SqliteDemo {
         System.out.println("dbFiber   = " + dbFiber);
 
         // 编排层等待两根 fiber 就绪（对应 await fiber）
-        dbFiber.ready().join();
-        repoFiber.ready().join();
+        dbFiber.await().join();
+        repoFiber.await().join();
         System.out.println("dbFiber   = " + dbFiber);
         System.out.println("repoFiber = " + repoFiber + "   (依赖就绪自动激活)\n");
 

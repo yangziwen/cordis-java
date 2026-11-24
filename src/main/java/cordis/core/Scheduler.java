@@ -51,7 +51,7 @@ public final class Scheduler {
      * inEventLoop 优化，避免无谓的队列往返）。
      */
     public void execute(Runnable task) {
-        if (Thread.currentThread() == mainThread.get()) {
+        if (inMainLoop()) {
             task.run();
         } else {
             try {
