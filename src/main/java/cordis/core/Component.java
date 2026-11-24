@@ -51,11 +51,26 @@ public interface Component {
     }
 
     /**
-     * 插件主体。
+     * 插件主体（同步路径，保持 @FunctionalInterface，lambda 直接可用）。
+     *
+     * 约束：必须轻量——运行在主循环线程上，禁止阻塞（JDBC/HTTP/文件 IO）。
+     * 初始化涉及阻塞工作时，覆写 {@link #applyAsync}，把阻塞工作 offload 到
+     * ctx.scheduler().offload(...)，此时 apply 不会被调用。
      *
      * @param ctx    本插件实例的专属上下文（fiber 的 ctx）
      * @param config 加载配置
      * @return 可选的清理函数；fiber 卸载时会被逆序调用
      */
     Disposable apply(Context ctx, Map<String, Object> config);
+
+    /**
+     * 异步插件主体（对应 TS 中插件返回 asyncDisposable / Promise）。
+     * fiber 在返回的 Promise 完成前停留在 LOADING 状态，期间不阻塞主循环、
+     * 不阻塞其他插件挂载。
+     *
+     * 默认实现直接同步调用 {@link #apply}（适用于轻量插件）。
+     */
+    default Promise<Disposable> applyAsync(Context ctx, Map<String, Object> config) {
+        return ctx.scheduler.resolved(apply(ctx, config));
+    }
 }

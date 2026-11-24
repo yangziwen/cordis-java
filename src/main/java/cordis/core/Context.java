@@ -35,6 +35,12 @@ public class Context {
     public final Registry registry;
     /** 事件系统（共享，对应 EventsService 挂在根上下文上） */
     public final EventsService events;
+    /**
+     * 调度中枢：主循环 + 扩展阻塞池（挂在根上下文，全树共享）。
+     * 所有生命周期状态迁移与事件派发都在主循环上串行执行；
+     * 阻塞型工作经 scheduler.offload(...) 到扩展池，结果投递回主循环。
+     */
+    public final Scheduler scheduler;
 
     /**
      * 全局服务仓库：隔离标签 -> 服务实例。
@@ -49,13 +55,15 @@ public class Context {
         this.parent = parent;
         this.root = parent == null ? this : parent.root;
         if (parent == null) {
-            // registry / events 只在根上下文创建一次，派生上下文继承共享
+            // scheduler / registry / events 只在根上下文创建一次，派生上下文继承共享
+            this.scheduler = new Scheduler();
             this.registry = new Registry(this);
-            this.events = new EventsService();
+            this.events = new EventsService(scheduler);
             // 根上下文自带一个“空插件”的 fiber
             // （对应 Context 构造函数中的 new Fiber(self, {}, ..., null, ...)）
             this.fiber = new Fiber(this);
         } else {
+            this.scheduler = parent.scheduler;
             this.registry = parent.registry;
             this.events = parent.events;
         }

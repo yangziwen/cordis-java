@@ -6,36 +6,48 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 对应 packages/core/src/events.ts。
+ * 对应 packages/core/src/events.ts（异步化版本）。
  *
  * cordis 的事件系统比普通 EventEmitter 强得多：
  * - 同一个事件名支持 5 种派发模式（emit / parallel / serial / bail / waterfall）；
- * - 监听器以 effect 的形式挂在“注册方所在的 fiber”上，fiber 卸载时自动解绑
- *   （对应 register() 里的 {@code this.ctx.fiber.effect(...)}）。
+ * - 监听器以 effect 的形式挂在“注册方所在的 fiber”上，fiber 卸载时自动解绑；
+ * - <b>异步感知</b>：监听器返回 {@link Promise} 时自动进入异步链路——
+ *   serial/waterfall 会等待它结算后再继续，parallel 会收集它的异常，
+ *   对应 TS 中“监听器返回 Promise 即被 await”的语义。
  *
- * TS 中 {@code ctx.events.on(...)} 的 thisArg 是由 Proxy 绑定到调用方上下文的；
- * Java 没有隐式 thisArg，因此注册方法需要显式传入调用方上下文（见
- * {@link Context#on} 便捷方法），派发方法则在共享实例上全局广播。
- *
- * TS 版本在派发时还会通过 thisArg 上的 [symbols.filter]（即 Service 的
- * isolate 过滤）筛选监听器；Java 范例中该过滤已由 Service.applicable()
- * 承载，事件派发保持全局广播，故不再重复实现。
+ * 线程模型：所有派发动作统一投递到 {@link Scheduler} 主循环串行执行，
+ * 因此 emit 可以从任意线程调用（典型场景：IO 回调线程里桥接事件）；
+ * 监听器内部若需阻塞，必须返回 scheduler.offload(...) 产出的 Promise。
  */
 public class EventsService {
 
     private final Map<String, List<Hook>> hooks = new LinkedHashMap<>();
+    private final Scheduler scheduler;
+
+    public EventsService(Scheduler scheduler) {
+        this.scheduler = scheduler;
+    }
 
     /**
      * 对应 on()：注册监听器并返回 Disposable。
-     * 监听器包装为 {@link Hook}，并注册为调用方所在 fiber 的 effect，
-     * fiber 卸载时自动解绑。
+     * 注册动作投递到主循环执行；监听器包装为 {@link Hook} 并注册为调用方
+     * 所在 fiber 的 effect，fiber 卸载时自动解绑。
      */
-    public Disposable on(Context caller, String name, EventListener listener) {
-        return caller.fiber().effect(() -> {
+    public Disposable on(Context caller, String name, final EventListener listener) {
+        final Hook[] holder = new Hook[1];
+        final boolean[] removed = {false};
+        scheduler.execute(() -> {
             Hook hook = new Hook(caller, listener);
-            hooks.computeIfAbsent(name, k -> new ArrayList<>()).add(hook);
-            return () -> unregister(name, hook);
-        }, "ctx.on(\"" + name + "\")");
+            holder[0] = hook;
+            if (!removed[0]) {
+                hooks.computeIfAbsent(name, k -> new ArrayList<>()).add(hook);
+            }
+        });
+        return () -> scheduler.execute(() -> {
+            removed[0] = true;
+            Hook hook = holder[0];
+            if (hook != null) unregister(name, hook);
+        });
     }
 
     /** 对应 once()：先移除自身，再执行监听器 */
@@ -48,7 +60,7 @@ public class EventsService {
         return handle[0];
     }
 
-    /** 对应 _resolve：取出监听器快照（已移除的不计入） */
+    /** 对应 _resolve：取出监听器快照（已移除的不计入）；仅主循环调用 */
     private List<Hook> snapshot(String name) {
         List<Hook> all = hooks.get(name);
         List<Hook> result = new ArrayList<>();
@@ -65,72 +77,160 @@ public class EventsService {
     }
 
     /**
-     * emit：同步广播，所有监听器都会执行，返回值被忽略。
-     * 对应 emit()。
+     * emit：广播，所有监听器都会执行，返回值被忽略（fire-and-forget）。
+     * 监听器返回的 Promise 若失败，记录为 unhandled rejection。
      */
-    public void emit(String name, Object... args) {
-        for (Hook hook : snapshot(name)) {
-            hook.callback.invoke(args);
-        }
+    public void emit(final String name, final Object... args) {
+        scheduler.execute(() -> {
+            for (Hook hook : snapshot(name)) {
+                Object out;
+                try {
+                    out = hook.callback.invoke(args);
+                } catch (RuntimeException e) {
+                    System.err.println("[cordis] listener error for \"" + name + "\": " + e);
+                    continue;
+                }
+                if (out instanceof Promise) {
+                    ((Promise<?>) out).catchError(e -> {
+                        System.err.println("[cordis] unhandled rejection in listener of \"" + name + "\": " + e);
+                        return null;
+                    });
+                }
+            }
+        });
     }
 
     /**
-     * serial：串行执行，遇到非 null 返回值立即截获并返回。
-     * 对应 async serial()（TS 版本会 await 每个监听器）。
+     * serial：串行执行，遇到非 null 返回值立即截获。
+     * 监听器返回 Promise 时会等待其结算：结算值非 null 截获，null 继续。
+     * 对应 async serial()。
      */
-    public Object serial(String name, Object... args) {
-        for (Hook hook : snapshot(name)) {
-            Object result = hook.callback.invoke(args);
-            if (isBailed(result)) return result;
-        }
-        return null;
+    public Promise<Object> serial(final String name, final Object... args) {
+        final Deferred<Object> result = scheduler.defer();
+        scheduler.execute(() -> runSerial(result, snapshot(name), 0, args));
+        return result.promise();
     }
 
     /**
      * bail：语义与 serial 相同；TS 中 bail 是纯同步版本（serial 会等待
-     * Promise），Java 没有此区分，两者共用实现。
+     * Promise），Java 中统一走异步实现。
      */
-    public Object bail(String name, Object... args) {
+    public Promise<Object> bail(String name, Object... args) {
         return serial(name, args);
+    }
+
+    /** serial 的递归链：执行第 index 个监听器并决定截获或继续 */
+    private void runSerial(final Deferred<Object> result, final List<Hook> hooks,
+                           final int index, final Object[] args) {
+        if (index >= hooks.size()) {
+            result.resolve(null);
+            return;
+        }
+        Object out;
+        try {
+            out = hooks.get(index).callback.invoke(args);
+        } catch (RuntimeException e) {
+            result.reject(e);
+            return;
+        }
+        if (isBailed(out)) {
+            result.resolve(out);
+        } else if (out instanceof Promise) {
+            ((Promise<Object>) out).handle((v, err) -> {
+                if (err != null) result.reject(err);
+                else if (isBailed(v)) result.resolve(v);
+                else runSerial(result, hooks, index + 1, args);
+            });
+        } else {
+            runSerial(result, hooks, index + 1, args);
+        }
     }
 
     /**
      * waterfall：洋葱/中间件模型。每个监听器接收“附加参数 + 上一个监听器
-     * 的返回值”，其返回值继续向下传递，最终返回最后一个监听器的结果。
-     * 对应 waterfall()。
+     * 的返回值”，其返回值继续向下传递（若返回 Promise 则等待结算），
+     * 最终返回最后一个监听器的结果。对应 waterfall()。
      */
-    public Object waterfall(String name, Object value, Object... args) {
-        for (Hook hook : snapshot(name)) {
-            Object[] full = new Object[args.length + 1];
-            System.arraycopy(args, 0, full, 0, args.length);
-            full[args.length] = value;
-            value = hook.callback.invoke(full);
+    public Promise<Object> waterfall(final String name, final Object value, final Object... args) {
+        final Deferred<Object> result = scheduler.defer();
+        scheduler.execute(() -> runWaterfall(result, snapshot(name), 0, args, value));
+        return result.promise();
+    }
+
+    private void runWaterfall(final Deferred<Object> result, final List<Hook> hooks,
+                              final int index, final Object[] args, final Object value) {
+        if (index >= hooks.size()) {
+            result.resolve(value);
+            return;
         }
-        return value;
+        Object[] full = new Object[args.length + 1];
+        System.arraycopy(args, 0, full, 0, args.length);
+        full[args.length] = value;
+        Object out;
+        try {
+            out = hooks.get(index).callback.invoke(full);
+        } catch (RuntimeException e) {
+            result.reject(e);
+            return;
+        }
+        if (out instanceof Promise) {
+            ((Promise<Object>) out).handle((v, err) -> {
+                if (err != null) result.reject(err);
+                else runWaterfall(result, hooks, index + 1, args, v);
+            });
+        } else {
+            runWaterfall(result, hooks, index + 1, args, out);
+        }
     }
 
     /**
-     * parallel：收集所有监听器的异常后合并抛出。
+     * parallel：并发执行所有监听器（allSettled 语义），全部结算后——
+     * 有失败则 reject（聚合异常，suppressed 携带全部原因），否则 resolve。
      * 对应 parallel()（TS 中为 Promise.allSettled + AggregateError）。
      */
-    public void parallel(String name, Object... args) {
-        List<RuntimeException> errors = new ArrayList<>();
-        for (Hook hook : snapshot(name)) {
-            try {
-                hook.callback.invoke(args);
-            } catch (RuntimeException e) {
-                errors.add(e);
+    public Promise<Void> parallel(final String name, final Object... args) {
+        final Deferred<Void> result = scheduler.defer();
+        scheduler.execute(() -> {
+            List<Promise<Object>> outcomes = new ArrayList<>();
+            for (Hook hook : snapshot(name)) {
+                final Deferred<Object> d = scheduler.defer();
+                outcomes.add(d.promise());
+                Object out;
+                try {
+                    out = hook.callback.invoke(args);
+                } catch (RuntimeException e) {
+                    d.reject(e);
+                    continue;
+                }
+                if (out instanceof Promise) {
+                    ((Promise<Object>) out).handle((v, err) -> {
+                        if (err != null) d.reject(err);
+                        else d.resolve(v);
+                    });
+                } else {
+                    d.resolve(out);
+                }
             }
-        }
-        if (!errors.isEmpty()) {
-            IllegalStateException error = new IllegalStateException(
-                    "one or more listeners of event \"" + name + "\" failed");
-            for (RuntimeException e : errors) error.addSuppressed(e);
-            throw error;
-        }
+            Promise.<Object>allSettled(scheduler, outcomes).then(settled -> {
+                List<Throwable> errors = new ArrayList<>();
+                for (Promise.Settled<Object> s : settled) {
+                    if (!s.success && s.error != null) errors.add(s.error);
+                }
+                if (errors.isEmpty()) {
+                    result.resolve(null);
+                } else {
+                    IllegalStateException error = new IllegalStateException(
+                            "one or more listeners of event \"" + name + "\" failed");
+                    for (Throwable t : errors) error.addSuppressed(t);
+                    result.reject(error);
+                }
+                return null;
+            });
+        });
+        return result.promise();
     }
 
-    /** 对应 unregister() */
+    /** 对应 unregister()；仅主循环调用 */
     private void unregister(String name, Hook hook) {
         hook.removed = true;
         List<Hook> list = hooks.get(name);
