@@ -20,6 +20,37 @@ import java.util.Map;
 public interface Component {
 
     /**
+     * 组件名，对应 TS 中 Component.Base 的 name 属性（JS 函数的固有名字）。
+     * 名字属于定义而非实例：同一组件的所有 fiber 共享这个名字，
+     * 仅用于日志/调试展示，不参与任何查找（服务名才是 key）。
+     *
+     * 返回 null 表示匿名组件（对应 TS 中 name === undefined）。
+     * lambda 无法携带名字，需要命名的组件可用 {@link #named} 包装，
+     * 或用类形态实现并覆写本方法。
+     */
+    default String getName() {
+        return null;
+    }
+
+    /**
+     * 给匿名 lambda 组件起名字的包装辅助（对应 TS 中给函数 defineProperty "name"）。
+     * 注意：每次调用产生一个新的组件实例（拥有独立的 Runtime 档案）。
+     */
+    static Component named(String name, Component delegate) {
+        return new Component() {
+            @Override
+            public String getName() {
+                return name;
+            }
+
+            @Override
+            public Disposable apply(Context ctx, Map<String, Object> config) {
+                return delegate.apply(ctx, config);
+            }
+        };
+    }
+
+    /**
      * 插件主体。
      *
      * @param ctx    本插件实例的专属上下文（fiber 的 ctx）

@@ -1,10 +1,10 @@
 package cordis.sqlite;
 
+import java.util.Map;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
-
-import java.util.Map;
 
 /**
  * SQLite 插件：Component 的真实用例。
@@ -19,6 +19,12 @@ public class SqlitePlugin implements Component {
     public static final SqlitePlugin INSTANCE = new SqlitePlugin();
 
     private SqlitePlugin() {
+    }
+
+    /** 名字属于组件定义（对应 TS 的 component.name） */
+    @Override
+    public String getName() {
+        return "sqlite";
     }
 
     @Override

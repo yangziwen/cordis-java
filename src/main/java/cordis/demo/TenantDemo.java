@@ -45,17 +45,17 @@ public class TenantDemo {
     }
 
     /** 数据库插件：每次激活在自己的分支上提供一个 DatabaseService */
-    static final Component DATABASE = (ctx, config) -> {
+    static final Component DATABASE = Component.named("database", (ctx, config) -> {
         DbService db = new DbService(ctx, (String) config.get("url"));
         System.out.println("[database] opened " + db);
         return null;
-    };
+    });
 
     /** 数据访问插件：按名字解析本租户分支内的 database 服务 */
-    static final Component REPO = (ctx, config) -> {
+    static final Component REPO = Component.named("repo", (ctx, config) -> {
         System.out.println("[repo] resolves database -> " + ctx.get("database"));
         return null;
-    };
+    });
 
     public static void main(String[] argv) {
         Context root = Context.root();
@@ -65,10 +65,10 @@ public class TenantDemo {
         Context tenant2 = root.isolate("database");
 
         // 直接在裸上下文上 use()（显式传 caller）：fiber 的 ctx 是隔离上下文的子节点
-        Fiber db1 = tenant1.registry.use(tenant1, "db1", DATABASE, Maps.of("url", "tenant1://ds1"), Maps.of());
-        Fiber repo1 = tenant1.registry.use(tenant1, "repo1", REPO, Maps.of(), Maps.of("database", null));
-        Fiber db2 = tenant2.registry.use(tenant2, "db2", DATABASE, Maps.of("url", "tenant2://ds2"), Maps.of());
-        Fiber repo2 = tenant2.registry.use(tenant2, "repo2", REPO, Maps.of(), Maps.of("database", null));
+        Fiber db1 = tenant1.registry.use(tenant1, DATABASE, Maps.of("url", "tenant1://ds1"), Maps.of());
+        Fiber repo1 = tenant1.registry.use(tenant1, REPO, Maps.of(), Maps.of("database", null));
+        Fiber db2 = tenant2.registry.use(tenant2, DATABASE, Maps.of("url", "tenant2://ds2"), Maps.of());
+        Fiber repo2 = tenant2.registry.use(tenant2, REPO, Maps.of(), Maps.of("database", null));
 
         System.out.println();
         System.out.println("db1=" + db1 + "  repo1=" + repo1);
@@ -85,7 +85,7 @@ public class TenantDemo {
 
         // 租户1恢复：repo1 自动复活
         System.out.println("\n-- tenant1 重新加载数据库 --");
-        tenant1.registry.use(tenant1, "db1", DATABASE, Maps.of("url", "tenant1://ds1-backup"), Maps.of());
+        tenant1.registry.use(tenant1, DATABASE, Maps.of("url", "tenant1://ds1-backup"), Maps.of());
         System.out.println("repo1 = " + repo1);
 
         // 清理剩余插件

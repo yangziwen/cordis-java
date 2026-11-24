@@ -43,7 +43,7 @@ public class Demo {
     }
 
     /** 数据库插件，对应 Component */
-    static final Component DATABASE = (ctx, config) -> {
+    static final Component DATABASE = Component.named("database", (ctx, config) -> {
         String url = (String) config.getOrDefault("url", "sqlite://demo.db");
         DatabaseService db = new DatabaseService(ctx, url);
         System.out.println("[database] connection opened: " + url);
@@ -56,10 +56,10 @@ public class Demo {
 
         // 插件主体返回清理函数，对应 TS 中插件返回 Disposable
         return () -> System.out.println("[database] connection closed: " + url);
-    };
+    });
 
     /** 服务器插件：声明依赖 database */
-    static final Component SERVER = (ctx, config) -> {
+    static final Component SERVER = Component.named("server", (ctx, config) -> {
         DatabaseService db = ctx.get("database");
         System.out.println("[server] started, resolving database -> " + db);
 
@@ -68,19 +68,19 @@ public class Demo {
             return null;
         });
         return null;
-    };
+    });
 
     public static void main(String[] argv) {
         // 1. 根上下文
         Context root = Context.root();
 
         // 2. 加载数据库插件
-        Fiber dbFiber = root.registry.use("database", DATABASE,
+        Fiber dbFiber = root.registry.use(DATABASE,
                 Maps.of("url", "mysql://prod:3306/app"), Maps.of());
         System.out.println("dbFiber = " + dbFiber);
 
         // 3. 加载服务器插件：inject 声明依赖 database
-        Fiber serverFiber = root.registry.use("server", SERVER,
+        Fiber serverFiber = root.registry.use(SERVER,
                 Maps.of(), Maps.of("database", null));
         System.out.println("serverFiber = " + serverFiber + "\n");
 
@@ -130,7 +130,7 @@ public class Demo {
 
         // 6. 重新加载数据库插件：服务器插件自动恢复
         System.out.println("\n-- registry.use(\"database\") again --");
-        root.registry.use("database", DATABASE, Maps.of("url", "sqlite://backup.db"), Maps.of());
+        root.registry.use(DATABASE, Maps.of("url", "sqlite://backup.db"), Maps.of());
         System.out.println("serverFiber = " + serverFiber);
 
         System.out.println("\n-- emit(\"request\") after reload --");

@@ -27,7 +27,7 @@ import cordis.util.Maps;
 public class SqliteDemo {
 
     /** 数据访问组件：声明依赖 sqlite（声明在 use() 的 inject 参数里，见 main） */
-    static final Component USER_REPO = (ctx, config) -> {
+    static final Component USER_REPO = Component.named("user-repo", (ctx, config) -> {
         SqliteService db = ctx.get("sqlite");
         System.out.println("[user-repo] started with " + db);
 
@@ -39,18 +39,18 @@ public class SqliteDemo {
             return null;
         });
         return null;
-    };
+    });
 
     public static void main(String[] argv) {
         Context root = Context.root();
 
         // 1. 先加载数据访问组件：sqlite 服务尚不存在 → 停在 PENDING
-        Fiber repoFiber = root.registry.use("user-repo", USER_REPO,
+        Fiber repoFiber = root.registry.use(USER_REPO,
                 Maps.of(), Maps.of("sqlite", null));
         System.out.println("repoFiber = " + repoFiber);
 
         // 2. 加载 SQLite 插件（内存库）→ 服务注册 → repo 自动激活
-        Fiber dbFiber = root.registry.use("sqlite", SqlitePlugin.INSTANCE,
+        Fiber dbFiber = root.registry.use(SqlitePlugin.INSTANCE,
                 Maps.of("url", "jdbc:sqlite::memory:"), Maps.of());
         System.out.println("dbFiber   = " + dbFiber);
         System.out.println("repoFiber = " + repoFiber + "\n");
@@ -85,7 +85,7 @@ public class SqliteDemo {
         // 6. 重新加载：repo 自动复活
         //    注意：新的 :memory: 连接是全新的空库——连接即库，这正是服务随 fiber 生灭的体现
         System.out.println("\n-- registry.use(\"sqlite\") again --");
-        root.registry.use("sqlite", SqlitePlugin.INSTANCE,
+        root.registry.use(SqlitePlugin.INSTANCE,
                 Maps.of("url", "jdbc:sqlite::memory:"), Maps.of());
         System.out.println("repoFiber = " + repoFiber);
         System.out.println("root.has(\"sqlite\") = " + root.has("sqlite"));

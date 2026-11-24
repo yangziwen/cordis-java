@@ -38,16 +38,16 @@ public class Registry {
 
     /**
      * 对应 registry.use()（TS 中通过 Proxy 绑定 thisArg）：在指定上下文上
-     * 实例化一个插件，返回其 Fiber。
+     * 实例化一个插件，返回其 Fiber。组件名取自 component.getName()。
      *
      * caller 决定两件事：
      * 1. fiber 的专属上下文是 caller 的子节点，因此 caller 分支上的
      *    isolate/intercept 标签都会被继承（多租户隔离的关键）；
      * 2. 插件的整个生命周期注册为 caller 沿父链解析出的 fiber 的 effect。
      */
-    public Fiber use(Context caller, String name, Component component,
+    public Fiber use(Context caller, Component component,
                      Map<String, Object> config, Map<String, Object> inject) {
-        Runtime runtime = internal.computeIfAbsent(component, c -> new Runtime(name, c));
+        Runtime runtime = internal.computeIfAbsent(component, c -> new Runtime(nameOf(c), c));
         Fiber fiber = new Fiber(caller, runtime,
                 config == null ? Collections.<String, Object>emptyMap() : config,
                 inject == null ? Collections.<String, Object>emptyMap() : inject);
@@ -60,14 +60,20 @@ public class Registry {
      * 注意：通过隔离上下文加载插件时必须用带 caller 的重载，
      * 否则隔离标签不会生效。
      */
-    public Fiber use(String name, Component component,
+    public Fiber use(Component component,
                      Map<String, Object> config, Map<String, Object> inject) {
-        return use(ctx, name, component, config, inject);
+        return use(ctx, component, config, inject);
     }
 
-    public Fiber use(String name, Component component) {
-        return use(name, component, Collections.<String, Object>emptyMap(),
+    public Fiber use(Component component) {
+        return use(ctx, component, Collections.<String, Object>emptyMap(),
                 Collections.<String, Object>emptyMap());
+    }
+
+    /** 解析组件名，对应 component.name；匿名组件退化为 "anonymous" */
+    private static String nameOf(Component component) {
+        String name = component.getName();
+        return name != null ? name : "anonymous";
     }
 
     /**
