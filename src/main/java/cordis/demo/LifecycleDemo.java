@@ -32,9 +32,9 @@ import cordis.util.Maps;
  *
  * 运行方式：
  *   mvn compile
- *   java -cp target/classes cordis.demo.AsyncLifecycleDemo
+ *   java -cp target/classes cordis.demo.LifecycleDemo
  */
-public class AsyncLifecycleDemo {
+public class LifecycleDemo {
 
     /** 一个简单的服务，对应 extends Service 的具名单例 */
     static class DatabaseService extends Service {

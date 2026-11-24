@@ -1,13 +1,16 @@
 package cordis.demo;
 
+import java.util.Arrays;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Fiber;
+import cordis.core.Promise;
 import cordis.core.Service;
 import cordis.util.Maps;
 
 /**
- * 多租户隔离演示：在裸隔离上下文上继续派生并 use() 插件。
+ * 多租户隔离演示（异步版）：在裸隔离上下文上继续派生并 use() 插件。
  *
  * 结构（隔离层只做标签遮蔽，fiber 挂在它的子节点上）：
  *
@@ -22,7 +25,9 @@ import cordis.util.Maps;
  *    否则插件会被挂到 root 下，隔离标签不生效；
  * 2. 两个租户的同名服务在全局仓库中以不同的隔离标签存放，互不可见；
  * 3. root 看不见任何租户的服务；租户分支内按名字解析到自己的服务；
- * 4. 依赖传播按租户精确隔离：卸载 db1 只影响 repo1，repo2 保持 ACTIVE。
+ * 4. 依赖传播按租户精确隔离：卸载 db1 只影响 repo1，repo2 保持 ACTIVE；
+ * 5. 编排层用 Promise.all + ready() 等待两租户全部就绪，用 awaitIdle()
+ *    等待主循环消化完 dispose/reload 动作后再断言状态。
  *
  * 运行方式：
  *   mvn compile
@@ -70,6 +75,10 @@ public class TenantDemo {
         Fiber db2 = tenant2.registry.use(tenant2, DATABASE, Maps.of("url", "tenant2://ds2"), Maps.of());
         Fiber repo2 = tenant2.registry.use(tenant2, REPO, Maps.of(), Maps.of("database", null));
 
+        // 编排层等待两个租户的全部 fiber 就绪（对应 await fiber）
+        Promise.all(root.scheduler, Arrays.asList(
+                db1.ready(), repo1.ready(), db2.ready(), repo2.ready())).join();
+
         System.out.println();
         System.out.println("db1=" + db1 + "  repo1=" + repo1);
         System.out.println("db2=" + db2 + "  repo2=" + repo2);
@@ -80,17 +89,22 @@ public class TenantDemo {
         // 卸载租户1的数据库：租户1的 repo 自动卸载，租户2不受影响
         System.out.println("\n-- db1.dispose() --");
         db1.dispose();
+        root.scheduler.awaitIdle();
         System.out.println("repo1 = " + repo1 + "   (PENDING，等租户1服务恢复)");
         System.out.println("repo2 = " + repo2 + "   (不受影响)");
 
         // 租户1恢复：repo1 自动复活
         System.out.println("\n-- tenant1 重新加载数据库 --");
         tenant1.registry.use(tenant1, DATABASE, Maps.of("url", "tenant1://ds1-backup"), Maps.of());
+        root.scheduler.awaitIdle();
         System.out.println("repo1 = " + repo1);
 
         // 清理剩余插件
         repo1.dispose();
         db2.dispose();
         repo2.dispose();
+        root.scheduler.awaitIdle();
+
+        root.scheduler.shutdown();
     }
 }
