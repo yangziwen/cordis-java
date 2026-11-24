@@ -133,14 +133,17 @@ public class EventsService {
             result.reject(e);
             return;
         }
-        if (isBailed(out)) {
-            result.resolve(out);
-        } else if (out instanceof Promise) {
+        // 注意分支顺序：Promise 必须先于 isBailed 判断——Promise 对象本身
+        // 非 null，若先做 isBailed 会把“尚未结算的 Promise”当作截获值
+        // 直接 resolve，而不是等待其结算（异步监听器从此失效）。
+        if (out instanceof Promise) {
             ((Promise<Object>) out).handle((v, err) -> {
                 if (err != null) result.reject(err);
                 else if (isBailed(v)) result.resolve(v);
                 else runSerial(result, hooks, index + 1, args);
             });
+        } else if (isBailed(out)) {
+            result.resolve(out);
         } else {
             runSerial(result, hooks, index + 1, args);
         }

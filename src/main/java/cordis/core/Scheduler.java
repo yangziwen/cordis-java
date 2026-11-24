@@ -4,6 +4,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -53,7 +54,12 @@ public final class Scheduler {
         if (Thread.currentThread() == mainThread.get()) {
             task.run();
         } else {
-            mainLoop.execute(task);
+            try {
+                mainLoop.execute(task);
+            } catch (RejectedExecutionException e) {
+                // 调度器已停机：丢弃尾声任务（停机后不再受理新回调，
+                // 与 Netty 停机后拒绝写入的行为一致）
+            }
         }
     }
 

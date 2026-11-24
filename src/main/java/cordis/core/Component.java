@@ -69,8 +69,14 @@ public interface Component {
      * 不阻塞其他插件挂载。
      *
      * 默认实现直接同步调用 {@link #apply}（适用于轻量插件）。
+     * apply 抛出的同步异常会被转成 rejected Promise——否则异常会逃逸到
+     * 主循环任务里，fiber 永远停在 LOADING、ready() 永不结算。
      */
     default Promise<Disposable> applyAsync(Context ctx, Map<String, Object> config) {
-        return ctx.scheduler.resolved(apply(ctx, config));
+        try {
+            return ctx.scheduler.resolved(apply(ctx, config));
+        } catch (Throwable t) {
+            return Promise.rejected(ctx.scheduler, t);
+        }
     }
 }
