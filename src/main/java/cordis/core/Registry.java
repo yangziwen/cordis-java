@@ -53,7 +53,7 @@ public class Registry {
                 inject == null ? Collections.<String, Object>emptyMap() : inject);
         runtime.fibers.add(fiber);
         // 挂载动作投递到主循环：use() 立即返回 fiber（可能仍是 PENDING），
-        // 挂载完成时 fiber.ready() 会结算——对应 await fiber
+        // 挂载完成时 fiber.await() 会结算——对应 await fiber
         ctx.scheduler.execute(fiber::register);
         return fiber;
     }

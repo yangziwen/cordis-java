@@ -26,7 +26,8 @@ import java.util.function.Supplier;
  *   因此慢初始化的插件不会阻塞任何人的挂载；
  * - 所有状态迁移只发生在 Scheduler 主循环线程上（use/dispose 亦被投递
  *   到主循环），整个状态机无锁；
- * - ready() 返回 Promise，编排层可等待插件就绪（对应 await fiber）。
+ * - await() 每次返回全新的 Promise（对应 TS Fiber.await 的 async 函数），
+ *   编排层用它等待当前生命周期事务结算
  */
 public class Fiber {
     /** 本 fiber 对应的上下文（一个 extend 出来的子上下文，对应 this.ctx） */
@@ -52,8 +53,8 @@ public class Fiber {
     private final DisposableList<Disposable> disposables = new DisposableList<>();
     /** 注册在父 fiber 上的 effect，dispose 时把整个插件从父上下文上撤销 */
     private Disposable registration;
-    /** 就绪信号：首次 ACTIVE 时 resolve，FAILED/DISPOSED 时 reject */
-    private final Deferred<Fiber> ready;
+    /** 当前正在飞的生命周期事务（对应 TS inertia）：非 null 表示有 reload 未结算，await() 等它 */
+    private Promise<Void> inertia;
     /** 对应 runner.epoch：effect 是否仍然有效 */
     private boolean epochActive;
     private Throwable error;
@@ -70,8 +71,6 @@ public class Fiber {
         this.registration = null;
         this.epochActive = true;
         this.state = FiberState.ACTIVE;
-        this.ready = owner.scheduler.defer();
-        this.ready.resolve(this);
     }
 
     /**
@@ -88,7 +87,6 @@ public class Fiber {
         this.component = runtime.callback;
         this.config = config;
         this.inject = inject;
-        this.ready = ctx.scheduler.defer();
     }
 
     /**
@@ -100,20 +98,47 @@ public class Fiber {
             this.epochActive = true;
             this.refresh();
             return () -> {
-                this.epochActive = false;
-                this.unload();
-                this.state = FiberState.DISPOSED;
-                this.ready.reject(new IllegalStateException("fiber \"" + name + "\" disposed before ready"));
+            this.epochActive = false;
+            this.unload();
+            this.state = FiberState.DISPOSED;
             };
         }, "registry.use(" + name + ")");
     }
 
     /**
-     * 就绪信号（对应 await fiber）：首次进入 ACTIVE 时 resolve，
-     * FAILED / DISPOSED 时 reject。编排层用它等待插件挂载完成。
+     * 对应 TS Fiber.await()：等待当前正在飞的生命周期事务（inertia）结算后返回。
+     * 与 TS 的 async 函数一致，<b>每次调用都产生一个全新的 Promise</b>，
+     * 不复用、不封版：
+     * <ul>
+     *   <li>调用瞬间有事务在飞（LOADING）→ 等它结算，再按最新 error 判定；</li>
+     *   <li>调用瞬间 fiber 静止 → 立即结算：error != null 则 reject
+     *       （最近一次 reload 的失败原因），否则 resolve(this)——
+     *       哪怕 state 仍是 PENDING（等依赖），与 TS 语义完全一致。</li>
+     * </ul>
+     * 因此后续每一次 reload 的成功/失败都能被新一次 await() 观察到，
+     * 不存在“首次结果永久封版”的问题。
      */
-    public Promise<Fiber> ready() {
-        return ready.promise();
+    public Promise<Fiber> await() {
+        final Deferred<Fiber> deferred = ctx.scheduler.defer();
+        ctx.scheduler.execute(() -> {
+            if (inertia != null) {
+                // 有事务在飞：等它结算后重新判定
+                // （对应 TS 的 while (this.inertia) await this.inertia）
+                inertia.handle((v, err) -> settleAwait(deferred));
+            } else {
+                settleAwait(deferred);
+            }
+        });
+        return deferred.promise();
+    }
+
+    /** await 的结算判定：只看最新 error（对应 TS 的 if (this._error) throw） */
+    private void settleAwait(Deferred<Fiber> deferred) {
+        if (error != null) {
+            deferred.reject(error);
+        } else {
+            deferred.resolve(this);
+        }
     }
 
     /** 对应 assertActive()：在已销毁的上下文上创建 effect 属于 INACTIVE_EFFECT 错误 */
@@ -174,12 +199,13 @@ public class Fiber {
      */
     private void reload() {
         state = FiberState.LOADING;
-        component.applyAsync(ctx, config)
+        // 对应 this.inertia = this._reload()：登记在飞事务，await() 据此等待
+        this.inertia = component.applyAsync(ctx, config)
                 .then(cleanup -> {
                     // 等待期间可能已被 dispose/依赖消失：丢弃迟到的结果
                     if (!epochActive || state != FiberState.LOADING) {
                         if (cleanup != null) cleanup.dispose();
-                        return null;
+                        return (Void) null;
                     }
                     if (cleanup != null) disposables.push(cleanup);
                     error = null;
@@ -189,17 +215,18 @@ public class Fiber {
                     for (Service s : new ArrayList<>(provisions)) {
                         ctx.registry.onServiceChanged(s.name);
                     }
-                    ready.resolve(this);
-                    return null;
+                    return (Void) null;
                 })
                 .catchError(e -> {
                     if (!epochActive) return null;
                     error = e;
                     state = FiberState.FAILED;
                     System.err.println("[cordis] fiber \"" + name + "\" failed: " + e);
-                    ready.reject(e);
                     return null;
-                });
+                })
+                // 对应 TS _reload 收尾的 inertia = undefined：事务结束；
+                // await() 的等待者在下一次主循环判定时看到静止态
+                .handle((v, err) -> this.inertia = null);
     }
 
     /**
@@ -241,7 +268,7 @@ public class Fiber {
         });
     }
 
-    /** 插件加载失败的原因（对应 _error，ready() reject 时携带） */
+    /** 插件加载失败的原因（对应 _error，await() 携带的最新失败） */
     public Throwable getError() {
         return error;
     }

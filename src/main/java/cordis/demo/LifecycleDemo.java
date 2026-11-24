@@ -133,9 +133,9 @@ public class LifecycleDemo {
         System.out.println("dbFiber     = " + dbFiber);
         System.out.println("serverFiber = " + serverFiber + "   (等待依赖...)");
 
-        // 编排层等待就绪（对应 await fiber）：Promise.all 聚合三根 fiber 的 ready
+        // 编排层等待就绪（对应 await fiber）：Promise.all 聚合三根 fiber 的 await
         Promise.all(root.scheduler, Arrays.asList(
-                slowFiber.ready(), dbFiber.ready(), serverFiber.ready())).join();
+                slowFiber.await(), dbFiber.await(), serverFiber.await())).join();
         System.out.println("slowFiber   = " + slowFiber);
         System.out.println("dbFiber     = " + dbFiber);
         System.out.println("serverFiber = " + serverFiber);
