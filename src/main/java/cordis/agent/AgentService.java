@@ -38,6 +38,18 @@ import cordis.core.Service;
  *
  * <h3>事件</h3>
  *
+ * <p>两条互不干扰的通道：
+ *
+ * <ul>
+ *   <li><b>全局事件</b>（{@code ctx.events}）适合日志与监控，但<b>不带会话
+ *       标识</b>，多会话并发时分不出归属；</li>
+ *   <li><b>会话监听器</b>（{@link AgentListener}，{@code run} 的第三个参数）
+ *       只发给本次 run 的调用方，多会话可以真并发——HTTP 层按会话推 SSE
+ *       靠的就是它。</li>
+ * </ul>
+ *
+ * 全局事件：
+ *
  * <ul>
  *   <li>{@code agent/step}：(step, toolCount) 每轮开始；</li>
  *   <li>{@code agent/reply}：(content) 模型终答；</li>
@@ -99,12 +111,27 @@ public class AgentService extends Service {
      * 跑一次对话。{@code history} 是调用方持有的会话记忆：本方法会向其中
      * 追加 user / assistant / tool 消息，run 结束后列表即完整对话——
      * 多轮对话 = 对同一个列表连续 run。
+     *
+     * <p>等价于 {@code run(history, input, AgentListener.NONE)}。
      */
     public AgentCall run(final List<LlmMessage> history, final String input) {
+        return run(history, input, AgentListener.NONE);
+    }
+
+    /**
+     * 跑一次对话，并把本次 run 的过程事件回调给 {@code listener}。
+     *
+     * <p>与全局 {@code ctx.events} 的分工见类注释：监听器是<b>会话级</b>的，
+     * 事件只属于这次 run，多会话可并发。回调线程与顺序见
+     * {@link AgentListener} 的线程契约。{@code history} 不是线程安全的，
+     * 同一个列表上的并发 run 由调用方负责加锁。
+     */
+    public AgentCall run(final List<LlmMessage> history, final String input,
+                         final AgentListener listener) {
         final AgentCall call = new AgentCall(ctx.scheduler.defer());
         ctx.scheduler.offload(() -> {
             try {
-                call.complete(runBlocking(history, input, call));
+                call.complete(runBlocking(history, input, call, listener));
             } catch (Throwable t) {
                 call.fail(t);
             }
@@ -122,6 +149,18 @@ public class AgentService extends Service {
      */
     AgentResult runBlocking(List<LlmMessage> history, String input, AgentCall call)
             throws Exception {
+        return runBlocking(history, input, call, AgentListener.NONE);
+    }
+
+    /**
+     * loop 主体的完整版：多一个会话级监听器。
+     *
+     * <p>监听器回调与全局事件在同一位置发出（顺序一致），区别只是前者同步
+     * 直调、后者经 {@code emit} 投回主循环。回调异常在此降级为 stderr。
+     */
+    AgentResult runBlocking(List<LlmMessage> history, String input, AgentCall call,
+                            AgentListener listener) throws Exception {
+        final AgentListener observer = listener == null ? AgentListener.NONE : listener;
         history.add(LlmMessage.user(input));
         int toolCallCount = 0;
         for (int step = 1; step <= maxSteps; step++) {
@@ -130,13 +169,18 @@ public class AgentService extends Service {
             }
             List<Tool> available = tools.snapshot();
             ctx.events.emit(EVT_STEP, step, available.size());
+            notifyStep(observer, step, available.size());
             // system 每轮重新求值：skill 清单等动态段可能在上一轮之后被 reload 刷过
             LlmReply reply = llm.chat(history, available, system == null ? null : system.provide());
             history.add(LlmMessage.assistant(reply));
             if (!reply.hasToolCalls()) {
                 ctx.events.emit(EVT_REPLY, reply.content);
+                notifyReply(observer, reply.content);
                 return new AgentResult(reply.content, AgentResult.StopReason.ANSWERED,
                         step, toolCallCount);
+            }
+            for (ToolCall request : reply.toolCalls) {
+                notifyToolStart(observer, request.name, request.arguments);
             }
             // 模型一轮请求多个工具时并发执行；结果仍按请求顺序回填，
             // 保证历史里 tool 消息的顺序与 assistant.tool_calls 一致
@@ -147,9 +191,44 @@ public class AgentService extends Service {
                 history.add(LlmMessage.toolResult(request.id, result));
                 toolCallCount++;
                 ctx.events.emit(EVT_TOOL, request.name, result);
+                notifyToolResult(observer, request.name, result);
             }
         }
         return new AgentResult("", AgentResult.StopReason.MAX_STEPS, maxSteps, toolCallCount);
+    }
+
+    // ---------- 监听器回调（异常不外泄） ----------
+
+    private static void notifyStep(AgentListener listener, int step, int visibleTools) {
+        try {
+            listener.onStep(step, visibleTools);
+        } catch (Throwable t) {
+            AgentListener.guard("onStep", t);
+        }
+    }
+
+    private static void notifyToolStart(AgentListener listener, String name, String arguments) {
+        try {
+            listener.onToolStart(name, arguments);
+        } catch (Throwable t) {
+            AgentListener.guard("onToolStart", t);
+        }
+    }
+
+    private static void notifyToolResult(AgentListener listener, String name, String result) {
+        try {
+            listener.onToolResult(name, result);
+        } catch (Throwable t) {
+            AgentListener.guard("onToolResult", t);
+        }
+    }
+
+    private static void notifyReply(AgentListener listener, String content) {
+        try {
+            listener.onReply(content);
+        } catch (Throwable t) {
+            AgentListener.guard("onReply", t);
+        }
     }
 
     /** 并发执行本轮全部工具，返回与入参同序的结果 */
