@@ -25,5 +25,16 @@
             <artifactId>sqlite-jdbc</artifactId>
             <version>3.21.0.1</version>
         </dependency>
+
+        <!--
+            OkHttp 3.14.x 是最后一个纯 Java 实现的大版本（4.x 起改用 Kotlin 编写，
+            会连带引入 kotlin-stdlib）。本项目只依赖它的 enqueue 异步回调，
+            不需要 4.x 的 Kotlin API。
+        -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>3.14.9</version>
+        </dependency>
     </dependencies>
 </project>
