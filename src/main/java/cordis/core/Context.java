@@ -1,7 +1,7 @@
 package cordis.core;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 对应 packages/core/src/context.ts + reflect.ts 的服务解析部分。
@@ -29,8 +29,15 @@ public class Context {
     /** 根上下文：服务仓库、registry、events 都由它持有并全树共享 */
     public final Context root;
 
-    /** 本层的隔离标签：服务名 -> 标签（对应 [symbols.isolate]） */
-    private final Map<String, Object> isolate = new LinkedHashMap<>();
+    /**
+     * 本层的隔离标签：服务名 -> 标签（对应 [symbols.isolate]）。
+     *
+     * 用 ConcurrentHashMap 而非 LinkedHashMap：写入只在主循环（provide /
+     * isolate()），但 {@link #get} 是 public 且允许在任意线程调用——
+     * 普通 HashMap 在并发扩容的迁移窗口里会读到 null，服务被静默判定为
+     * “不存在”，依赖者随即被错误卸载（实测千万级读里可稳定复现）。
+     */
+    private final Map<String, Object> isolate = new ConcurrentHashMap<>();
 
     /** 组件注册表（共享，对应 RegistryService 挂在根上下文上） */
     public final Registry registry;
@@ -46,11 +53,19 @@ public class Context {
     /**
      * 全局服务仓库：隔离标签 -> 服务实例。
      * 对应 ReflectService.store（以 isolate symbol 为主键）。
+     *
+     * 与 isolate 表同理：写只在主循环，读可来自任意线程，必须是并发容器；
+     * 否则扩容期间 {@link #get} 会漏读，表现为服务“时有时无”。
      */
-    final Map<Object, Service> serviceStore = new LinkedHashMap<>();
+    final Map<Object, Service> serviceStore = new ConcurrentHashMap<>();
 
-    /** 本上下文当前对应的 fiber（对应 ctx.fiber） */
-    private Fiber fiber;
+    /**
+     * 本上下文当前对应的 fiber（对应 ctx.fiber）。
+     * volatile：只在主循环写入（Fiber 构造时），但 {@link #fiber()} 会被
+     * 跨线程的 {@link #get} 调用；非 volatile 时外部线程可能读到 null，
+     * 沿父链误解析成祖先 fiber，使状态检查落在错误的对象上。
+     */
+    private volatile Fiber fiber;
 
     private Context(Context parent) {
         this.parent = parent;

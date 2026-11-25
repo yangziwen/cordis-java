@@ -62,7 +62,12 @@ public class Fiber {
     private Promise<Void> inertia;
     /** 对应 runner.epoch：effect 是否仍然有效 */
     private boolean epochActive;
-    private Throwable error;
+    /**
+     * 最近一次加载失败原因（对应 _error）。
+     * volatile：只在主循环写入，但 {@link #getError()} 是 public，
+     * 编排/运维侧会从外部线程读，非 volatile 可能永远看不到新的失败。
+     */
+    private volatile Throwable error;
 
     /** 根 fiber，对应 Fiber 构造函数中 runtime == null 的分支 */
     Fiber(Context owner) {

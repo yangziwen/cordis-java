@@ -237,8 +237,17 @@ public class Promise<T> {
     /**
      * 阻塞等待结果。<b>严禁在主循环线程调用</b>（会卡死全部调度），
      * 仅用于 main 编排脚本和测试的最终同步点。
+     *
+     * 主循环上调用直接 fail-fast：那条路径不会“慢”，而是永久死锁——
+     * 结算回调本身也排在主循环队列里，主循环却在等它，等于自己等自己。
+     * 实测这种误用会让整个框架静默停摆（所有插件、所有定时任务全部冻结）。
      */
     public T join() {
+        if (scheduler.inMainLoop()) {
+            throw new IllegalStateException(
+                    "Promise.join() must not be called on the main loop (deadlock); "
+                            + "use then()/thenAsync()/await() to stay asynchronous");
+        }
         synchronized (monitor) {
             while (state == State.PENDING) {
                 try {

@@ -2,9 +2,9 @@ package cordis.core;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 对应 packages/core/src/registry.ts 的 RegistryService。
@@ -19,8 +19,12 @@ import java.util.Map;
 public class Registry {
 
     private final Context ctx;
-    /** 组件 -> 运行时档案（对应 _internal：Map&lt;Function, Component.Runtime&gt;） */
-    private final Map<Component, Runtime> internal = new LinkedHashMap<>();
+    /**
+     * 组件 -> 运行时档案（对应 _internal：Map&lt;Function, Component.Runtime&gt;）。
+     * 写只在主循环，但 {@link #size()} 是 public 且常被测试/编排层从外部轮询，
+     * 故用并发容器（普通 HashMap 的并发读会读到陈旧的 size 甚至内部不一致）。
+     */
+    private final Map<Component, Runtime> internal = new ConcurrentHashMap<>();
 
     Registry(Context ctx) {
         this.ctx = ctx;
