@@ -15,10 +15,12 @@ package cordis.http;
  *   <li>{@code retry} 字段与重连相关，本实现不做自动重连，故忽略。</li>
  * </ul>
  *
- * <p>本类不是线程安全的，但同一条流只会在一个 Dispatcher 线程上读取，
- * 因此无需同步。拆成独立类是为了能脱离网络单测解析逻辑。
+ * <p>本类不是线程安全的，但同一条流只会在一个线程上读取，因此无需同步。
+ * 拆成独立类有两个用途：能脱离网络单测解析逻辑；能供<b>自己持有
+ * {@code InputStream}</b> 的 wire 客户端复用（例如 {@code cordis.agent.llm}
+ * 同步读响应体，不走 {@code HttpService.stream} 的回调通道）。
  */
-final class SseParser {
+public final class SseParser {
 
     private final StringBuilder data = new StringBuilder();
 
@@ -31,7 +33,7 @@ final class SseParser {
     /**
      * 喂入一行（不含换行符），返回需要派发的消息；无消息返回 null。
      */
-    SseEvent accept(String line) {
+    public SseEvent accept(String line) {
         if (line.isEmpty()) {
             return dispatch();
         }
@@ -66,7 +68,7 @@ final class SseParser {
     }
 
     /** 流结束时调用：把没有以空行收尾的最后一条消息也派发出去 */
-    SseEvent flush() {
+    public SseEvent flush() {
         return dispatch();
     }
 

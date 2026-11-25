@@ -34,6 +34,15 @@ public final class LlmReply {
         return new LlmReply("", toolCalls);
     }
 
+    /**
+     * 文本与工具调用兼有的一轮。真实模型经常先说话再调工具
+     * （"我先看一下目录"），这段文本必须随 assistant 消息一起留在历史里，
+     * 否则下一轮模型看到的是自己"什么都没说就调了工具"。
+     */
+    public static LlmReply of(String content, List<ToolCall> toolCalls) {
+        return new LlmReply(content, toolCalls);
+    }
+
     /** 单个工具调用的便捷构造（脚手架 / 测试最常用） */
     public static LlmReply toolCall(String id, String name, String arguments) {
         List<ToolCall> calls = new ArrayList<>();

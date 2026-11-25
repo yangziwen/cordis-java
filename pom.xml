@@ -36,5 +36,16 @@
             <artifactId>okhttp</artifactId>
             <version>3.14.9</version>
         </dependency>
+
+        <!--
+            Jackson 只用于 wire 层（cordis.agent.llm）：把 OpenAI 兼容协议的
+            JSON 与流式分片读成 JsonNode，框架内核与 agent 包本身仍然不依赖它。
+            2.17.x 是 Java 8 基线，不需要 3.x（要求 JDK 17）。
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.2</version>
+        </dependency>
     </dependencies>
 </project>

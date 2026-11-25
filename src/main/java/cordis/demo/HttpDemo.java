@@ -172,7 +172,14 @@ public class HttpDemo {
             }
             write(exchange, 200, "{\"slept\":true}".getBytes(StandardCharsets.UTF_8));
         });
-        server.setExecutor(Executors.newFixedThreadPool(32));
+        // 线程池必须用 daemon 线程：HttpServer.stop() 只停自己的 dispatcher，
+        // <b>不会</b> shutdown 调用方通过 setExecutor 传进来的池。非 daemon 的
+        // 池线程会一直把 JVM 挂着，脚本/CI 里表现为"输出打完了但不退出"。
+        server.setExecutor(Executors.newFixedThreadPool(32, r -> {
+            Thread thread = new Thread(r, "demo-http-server");
+            thread.setDaemon(true);
+            return thread;
+        }));
         server.start();
         return server;
     }

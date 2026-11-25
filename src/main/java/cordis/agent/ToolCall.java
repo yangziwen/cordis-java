@@ -7,8 +7,9 @@ package cordis.agent;
  * math"，随后的 tool 消息必须以 call_1 回填结果，两边靠它对上。OpenAI 形如
  * {@code "call_xxx"}，Anthropic 用序号——本类不解释内容，只透传。
  *
- * <p>{@code arguments} 保持 JSON 字符串而不解析成结构，两个原因：一是本
- * 框架不引入 JSON 库，二是工具的实现方最清楚自己的 schema，由它自己解析。
+ * <p>{@code arguments} 保持 JSON 字符串而不解析成结构：工具的实现方最清楚
+ * 自己的 schema，由它自己解析。框架层与 agent 包因此不依赖任何 JSON 库，
+ * 只有 wire 层（{@code cordis.agent.llm}）需要。
  */
 public final class ToolCall {
 
