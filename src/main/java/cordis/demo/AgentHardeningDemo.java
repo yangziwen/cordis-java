@@ -238,16 +238,16 @@ public final class AgentHardeningDemo {
         history.add(LlmMessage.user("说一段长话"));
 
         OpenAiLlmClient whole = new OpenAiLlmClient(
-                baseUrl + "/whole", "test-key", "test-model", null, false, 0);
+                baseUrl + "/whole", "test-key", "test-model", false, 0);
         OpenAiLlmClient stop = new OpenAiLlmClient(
-                baseUrl + "/stop", "test-key", "test-model", null, false, 0);
+                baseUrl + "/stop", "test-key", "test-model", false, 0);
         OpenAiLlmClient streaming = new OpenAiLlmClient(
-                baseUrl + "/stream", "test-key", "test-model", null, true, 0);
+                baseUrl + "/stream", "test-key", "test-model", true, 0);
         try {
             checks.check("非流式 finish_reason=length -> IOException",
                     rejectedWith(whole, history, "finish_reason=length"), describe(whole, history));
 
-            LlmReply ok = stop.chat(history, new ArrayList<>());
+            LlmReply ok = stop.chat(history, new ArrayList<>(), null);
             checks.check("finish_reason=stop 正常返回内容", "半截答案".equals(ok.content),
                     "实际: " + ok.content);
 
@@ -266,7 +266,7 @@ public final class AgentHardeningDemo {
     private static boolean rejectedWith(OpenAiLlmClient client, List<LlmMessage> history,
                                         String needle) {
         try {
-            client.chat(history, new ArrayList<>());
+            client.chat(history, new ArrayList<>(), null);
             return false;
         } catch (Exception e) {
             String message = String.valueOf(e.getMessage());
@@ -277,7 +277,7 @@ public final class AgentHardeningDemo {
 
     private static String describe(OpenAiLlmClient client, List<LlmMessage> history) {
         try {
-            client.chat(history, new ArrayList<>());
+            client.chat(history, new ArrayList<>(), null);
             return "没有抛异常";
         } catch (Exception e) {
             return "抛出 " + e.getClass().getSimpleName() + ": " + e.getMessage();
@@ -452,7 +452,7 @@ public final class AgentHardeningDemo {
     private static final class BoomLlm implements LlmClient {
 
         @Override
-        public LlmReply chat(List<LlmMessage> history, List<Tool> tools) {
+        public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt) {
             if ("tool".equals(last(history).role)) {
                 return LlmReply.answer("工具报错了，我改道");
             }
@@ -465,7 +465,7 @@ public final class AgentHardeningDemo {
     private static final class LoopLlm implements LlmClient {
 
         @Override
-        public LlmReply chat(List<LlmMessage> history, List<Tool> tools) {
+        public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt) {
             return LlmReply.toolCall("call_" + history.size(), "echo", "{}");
         }
 
@@ -475,7 +475,7 @@ public final class AgentHardeningDemo {
     private static final class TripleLlm implements LlmClient {
 
         @Override
-        public LlmReply chat(List<LlmMessage> history, List<Tool> tools) {
+        public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt) {
             if ("tool".equals(last(history).role)) {
                 return LlmReply.answer("三个都回来了");
             }

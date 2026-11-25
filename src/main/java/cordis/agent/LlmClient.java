@@ -22,11 +22,18 @@ import java.util.List;
 public interface LlmClient {
 
     /**
-     * @param history 截至当前的全部消息（实现方不得修改）
-     * @param tools   本轮可见的工具（快照，顺序稳定）
+     * @param history     截至当前的全部消息（实现方不得修改；system 不在其中——
+     *                     system 是“每轮重新求值的配置”，不是会话记忆，
+     *                     混进 history 会被持久化层当作对话存起来）
+     * @param tools       本轮可见的工具（快照，顺序稳定）
+     * @param systemPrompt 可为 null：随本轮请求下发的 system 指令。由
+     *                     {@link AgentService} 在每轮求值（通常是固定基底
+     *                     + 动态段，例如 skill 清单），实现方把它作为消息
+     *                     数组的第一条 system 消息下发
      * @throws Exception 网络 / 鉴权 / 响应解析失败；AgentService 会把它
      *                   变成本次 run 的 rejected，不会重试
      */
-    LlmReply chat(List<LlmMessage> history, List<Tool> tools) throws Exception;
+    LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt)
+            throws Exception;
 
 }

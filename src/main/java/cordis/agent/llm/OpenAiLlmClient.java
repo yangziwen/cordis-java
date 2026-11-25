@@ -97,9 +97,6 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
 
     private final String model;
 
-    /** 可选的系统提示，为空则不下发 system 消息 */
-    private final String systemPrompt;
-
     private final boolean stream;
 
     /** 0 表示不下发 max_tokens，交给模型默认值 */
@@ -112,7 +109,7 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
     private final AtomicBoolean disposed = new AtomicBoolean();
 
     public OpenAiLlmClient(String baseUrl, String apiKey, String model) {
-        this(baseUrl, apiKey, model, null, true, 0);
+        this(baseUrl, apiKey, model, true, 0);
     }
 
     /**
@@ -120,10 +117,9 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
      *                     本类负责拼上 {@code /chat/completions}
      * @param stream       true 走 SSE（首字延迟低、工具调用必须靠聚合器拼），
      *                     false 走一次性 JSON（实现简单、便于对拍）
-     * @param systemPrompt 可为 null；非 null 时作为历史之前的 system 消息下发
      * @param maxTokens    0 表示不下发
      */
-    public OpenAiLlmClient(String baseUrl, String apiKey, String model, String systemPrompt,
+    public OpenAiLlmClient(String baseUrl, String apiKey, String model,
                            boolean stream, int maxTokens) {
         if (baseUrl == null || baseUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("baseUrl must not be empty");
@@ -141,7 +137,6 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
         this.endpoint = base + "/chat/completions";
         this.apiKey = apiKey.trim();
         this.model = model.trim();
-        this.systemPrompt = systemPrompt;
         this.stream = stream;
         this.maxTokens = maxTokens;
         // 流式必须 readTimeout(0)：模型思考期间连接上可能长时间一个字节都没有，
@@ -158,11 +153,12 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
     // ---------- LlmClient ----------
 
     @Override
-    public LlmReply chat(List<LlmMessage> history, List<Tool> tools) throws Exception {
+    public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt)
+            throws Exception {
         if (disposed.get()) {
             throw new IllegalStateException("llm client has been disposed");
         }
-        Request request = buildRequest(history, tools);
+        Request request = buildRequest(history, tools, systemPrompt);
         Call call = client.newCall(request);
         Response response = call.execute();
         try (ResponseBody body = response.body()) {
@@ -179,11 +175,12 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
 
     // ---------- 请求构造 ----------
 
-    private Request buildRequest(List<LlmMessage> history, List<Tool> tools)
+    private Request buildRequest(List<LlmMessage> history, List<Tool> tools, String systemPrompt)
             throws JsonProcessingException {
         ObjectNode payload = mapper.createObjectNode();
         payload.put("model", model);
         ArrayNode messages = payload.putArray("messages");
+        // system 来自本轮入参而非构造时固定：清单等动态段允许每轮变化
         if (systemPrompt != null && !systemPrompt.isEmpty()) {
             ObjectNode system = messages.addObject();
             system.put("role", "system");

@@ -75,14 +75,19 @@ public class AgentService extends Service {
 
     private final int maxSteps;
 
+    /** 每轮求值的 system 指令；可空（为 null 的轮次不带 system 消息） */
+    private final SystemProvider system;
+
     /** 同轮多工具的并发池；理由见类注释的线程模型 */
     private final ExecutorService toolPool;
 
-    public AgentService(Context ctx, LlmClient llm, ToolService tools, int maxSteps) {
+    public AgentService(Context ctx, LlmClient llm, ToolService tools, int maxSteps,
+                        SystemProvider system) {
         super(ctx, "agent");
         this.llm = llm;
         this.tools = tools;
         this.maxSteps = maxSteps;
+        this.system = system;
         this.toolPool = Executors.newCachedThreadPool(r -> {
             Thread thread = new Thread(r, "agent-tool");
             thread.setDaemon(true);
@@ -125,7 +130,8 @@ public class AgentService extends Service {
             }
             List<Tool> available = tools.snapshot();
             ctx.events.emit(EVT_STEP, step, available.size());
-            LlmReply reply = llm.chat(history, available);
+            // system 每轮重新求值：skill 清单等动态段可能在上一轮之后被 reload 刷过
+            LlmReply reply = llm.chat(history, available, system == null ? null : system.provide());
             history.add(LlmMessage.assistant(reply));
             if (!reply.hasToolCalls()) {
                 ctx.events.emit(EVT_REPLY, reply.content);

@@ -197,8 +197,7 @@ public final class FsAgentDemo {
             System.out.println("   [tool] " + a[0] + " -> " + brief(String.valueOf(a[1]), 90));
             return null;
         });
-        OpenAiLlmClient llm = new OpenAiLlmClient(baseUrl, appId, model,
-                SYSTEM_PROMPT, true, 0);
+        OpenAiLlmClient llm = new OpenAiLlmClient(baseUrl, appId, model, true, 0);
         List<Fiber> fibers = new ArrayList<>();
         try {
             seedWorkspace(root);
@@ -212,7 +211,8 @@ public final class FsAgentDemo {
                             }),
                     null).await().join());
             fibers.add(ctx.registry.use(AgentPlugin.INSTANCE,
-                    Maps.of("llm", llm, "maxSteps", 6), null).await().join());
+                    Maps.of("llm", llm, "maxSteps", 6, "system", SYSTEM_PROMPT),
+                    null).await().join());
             fibers.add(ctx.registry.use(FileSystemTools.INSTANCE,
                     Maps.of(), Maps.of("filesystem", true, "agent.tools", true))
                     .await().join());

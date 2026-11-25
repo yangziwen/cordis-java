@@ -83,11 +83,12 @@ public final class OpenAiAgentDemo {
         System.out.println("target  : " + target);
         System.out.println();
 
-        // 流式客户端给 agent 用；非流式那个只用于对拍
+        // 流式客户端给 agent 用；非流式那个只用于对拍。
+        // system 不再属于 wire 层：作为 AgentPlugin 的配置下发（见下方 use）
         final OpenAiLlmClient streaming =
-                new OpenAiLlmClient(baseUrl, appId, model, SYSTEM_PROMPT, true, 0);
+                new OpenAiLlmClient(baseUrl, appId, model, true, 0);
         final OpenAiLlmClient whole =
-                new OpenAiLlmClient(baseUrl, appId, model, SYSTEM_PROMPT, false, 0);
+                new OpenAiLlmClient(baseUrl, appId, model, false, 0);
 
         Context root = Context.root();
         final Disposable stepHook = root.on(AgentService.EVT_STEP, a -> {
@@ -100,7 +101,8 @@ public final class OpenAiAgentDemo {
         });
 
         Fiber agentFiber = root.registry.use(AgentPlugin.INSTANCE,
-                Maps.of("llm", streaming, "maxSteps", 6), null).await().join();
+                Maps.of("llm", streaming, "maxSteps", 6, "system", SYSTEM_PROMPT),
+                null).await().join();
         Fiber listFiber = root.registry.use(new ToolComponent(new ListDirTool()),
                 Maps.of(), Maps.of("agent.tools", true)).await().join();
         Fiber readFiber = root.registry.use(new ToolComponent(new ReadFileTool()),
@@ -161,9 +163,9 @@ public final class OpenAiAgentDemo {
         List<Tool> tools = Arrays.<Tool>asList(new ListDirTool(), new ReadFileTool());
 
         long t0 = System.nanoTime();
-        LlmReply viaStream = streaming.chat(history, tools);
+        LlmReply viaStream = streaming.chat(history, tools, null);
         long t1 = System.nanoTime();
-        LlmReply viaWhole = whole.chat(history, tools);
+        LlmReply viaWhole = whole.chat(history, tools, null);
         long t2 = System.nanoTime();
 
         System.out.println("   stream: " + millis(t0, t1) + "ms -> " + describe(viaStream));

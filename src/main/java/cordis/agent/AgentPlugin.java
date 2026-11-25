@@ -17,7 +17,9 @@ import cordis.core.Disposable;
  * <ul>
  *   <li>{@code llm}（必填）模型客户端实现；</li>
  *   <li>{@code maxSteps}（默认 8）单次 run 的模型调用轮数上限——无此上限时，
- *       一个执着的模型可以无限请求工具。</li>
+ *       一个执着的模型可以无限请求工具；</li>
+ *   <li>{@code system}（可选）system 指令：传 String 为固定基底，传
+ *       {@link SystemProvider} 则每轮求值（动态段，如 skill 清单）。</li>
  * </ul>
  *
  * <p>apply 返回的清理只做一件事：关掉 {@link AgentService} 的工具并发池
@@ -44,11 +46,26 @@ public class AgentPlugin implements Component {
                     + " of type LlmClient (got: " + (llm == null ? "null" : llm.getClass()) + ")");
         }
         int maxSteps = (int) number(config, "maxSteps", 8);
+        SystemProvider system = systemOf(config.get("system"));
 
         // 同一 fiber 内直接传引用：两个服务同生共死，不存在解析时序问题
         ToolService tools = new ToolService(ctx);
-        final AgentService agent = new AgentService(ctx, (LlmClient) llm, tools, maxSteps);
+        final AgentService agent = new AgentService(ctx, (LlmClient) llm, tools,
+                maxSteps, system);
         return () -> agent.shutdown();
+    }
+
+    /** String → 常量基底；SystemProvider → 直接使用；两者叠加，null → 无 system */
+    private static SystemProvider systemOf(Object config) {
+        if (config instanceof SystemProvider) {
+            return (SystemProvider) config;
+        }
+        final String base = config instanceof String && !String.valueOf(config).trim().isEmpty()
+                ? String.valueOf(config).trim() : null;
+        if (base == null) {
+            return null;
+        }
+        return () -> base;
     }
 
     private static long number(Map<String, Object> config, String key, long fallback) {

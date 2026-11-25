@@ -156,7 +156,7 @@ public final class MemoryDemo {
     private static final class RememberLlm implements LlmClient {
 
         @Override
-        public LlmReply chat(List<LlmMessage> history, List<Tool> tools) {
+        public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt) {
             LlmMessage last = history.get(history.size() - 1);
             System.out.println("   [llm] 看到 " + history.size() + " 条历史，末条: " + last);
             String name = "无名氏";

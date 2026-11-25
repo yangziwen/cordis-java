@@ -158,7 +158,8 @@ public final class AgentDemo {
     private static final class AdaptiveLlm implements LlmClient {
 
         @Override
-        public LlmReply chat(List<LlmMessage> history, List<Tool> tools) throws Exception {
+        public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt)
+                throws Exception {
             Thread.sleep(120);
             StringBuilder names = new StringBuilder();
             for (Tool tool : tools) {
