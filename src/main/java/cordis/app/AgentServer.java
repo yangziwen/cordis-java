@@ -35,6 +35,8 @@ import cordis.agent.Tool;
 import cordis.agent.ToolComponent;
 import cordis.agent.ToolService;
 import cordis.agent.fs.FileSystemTools;
+import cordis.agent.http.HttpAccessPolicy;
+import cordis.agent.http.HttpTools;
 import cordis.agent.llm.OpenAiLlmClient;
 import cordis.agent.skill.SkillTools;
 import cordis.core.Context;
@@ -42,6 +44,7 @@ import cordis.core.Disposable;
 import cordis.core.Fiber;
 import cordis.fs.ApprovalGate;
 import cordis.fs.FileSystemPlugin;
+import cordis.http.HttpPlugin;
 import cordis.skill.SkillPlugin;
 import cordis.skill.SkillService;
 import cordis.util.Maps;
@@ -77,6 +80,17 @@ import cordis.util.Maps;
  * <p>锁只护住单个会话的 {@code history}：同一会话的请求串行（历史是可变
  * 列表），不同会话真并发。过程事件走 {@link AgentListener}，随本次 run 走，
  * 天然按次隔离，不需要全局串行。
+ *
+ * <h3>网络访问</h3>
+ *
+ * <p>默认<b>不装</b> HTTP 工具：一个能自拟 URL 的模型等于把内网访问权交出去。
+ * 需要联网时显式给白名单（{@code --allow-host}，可重复），此时挂上
+ * {@code http_get} / {@code http_post}；{@link HttpAccessPolicy} 对<b>每一跳
+ * 重定向</b>重新校验，堵住「白名单地址 302 到内网」这条路。
+ *
+ * <p>{@code --allow-host '*'} 意为放行<b>全部主机</b>（仍只限 http/https），
+ * 只用于本地调试：此时 {@code /health} 的 {@code httpScope} 会是 {@code all}，
+ * banner 也会明确提示。
  *
  * <h3>有意保留的边界</h3>
  *
@@ -195,6 +209,17 @@ public final class AgentServer implements AutoCloseable {
                     .await().join());
             fibers.add(ctx.registry.use(SkillTools.INSTANCE,
                     Maps.of(), Maps.of("skills", true, "agent.tools", true)).await().join());
+            // http 工具按策略装配：没配白名单就不装——模型看不到用不了的工具，
+            // 也少占 system 里的 function 定义预算
+            if (config.httpAccess() != null) {
+                fibers.add(ctx.registry.use(HttpPlugin.INSTANCE, Maps.of(), null)
+                        .await().join());
+                fibers.add(ctx.registry.use(HttpTools.INSTANCE,
+                        Maps.of("policy", config.httpAccess(),
+                                "timeoutMs", config.httpTimeoutMs(),
+                                "maxResponseBytes", config.httpMaxResponseBytes()),
+                        Maps.of("http", true, "agent.tools", true)).await().join());
+            }
             for (Tool tool : config.tools()) {
                 fibers.add(ctx.registry.use(new ToolComponent(tool), Maps.of(),
                         Maps.of("agent.tools", true)).await().join());
@@ -268,6 +293,11 @@ public final class AgentServer implements AutoCloseable {
             body.put("sessions", sessions.size());
             body.put("write", config.approval() != null ? "custom"
                     : (config.allowWrite() ? "allowed" : "denied"));
+            HttpAccessPolicy httpAccess = config.httpAccess();
+            body.put("http", httpAccess == null ? "disabled" : "enabled");
+            if (httpAccess != null) {
+                body.put("httpScope", httpAccess.open() ? "all" : "allowlist");
+            }
             ArrayNode names = body.putArray("tools");
             for (Tool tool : visibleTools()) {
                 names.add(tool.name());
@@ -628,6 +658,16 @@ public final class AgentServer implements AutoCloseable {
                                 : "denied (只读；需要写入时加 --allow-write)")));
         System.out.println("[agent-server] skills: " + server.skillCount()
                 + "  tools: " + server.visibleTools().size());
+        HttpAccessPolicy httpAccess = server.config.httpAccess();
+        String httpLine;
+        if (httpAccess == null) {
+            httpLine = "off (用 --allow-host 放行后启用)";
+        } else if (httpAccess.open()) {
+            httpLine = "on (全部主机放行 —— 模型可访问任意 http/https 地址，仅建议本地调试)";
+        } else {
+            httpLine = "on (白名单逐跳校验)";
+        }
+        System.out.println("[agent-server] http tools: " + httpLine);
         if (server.skillCount() == 0) {
             System.out.println("[agent-server] 提示：把技能放到 "
                     + server.config.root().toAbsolutePath().resolve("skills")
@@ -655,6 +695,8 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --model <name>    模型名，默认 " + DEFAULT_MODEL);
         System.out.println("  --base-url <url>  OpenAI 兼容网关，默认 " + DEFAULT_BASE_URL);
         System.out.println("  --allow-write     放行文件写入（默认为只读：写操作被拒绝）");
+        System.out.println("  --allow-host <h>  允许模型访问的主机，可重复（如 api.example.com、"
+                + "*.corp.com；'*' = 放行全部主机，仅建议本地调试）；不写则不装配 http 工具");
         System.out.println("  --help            显示本帮助");
         System.out.println();
         System.out.println("凭证只从环境变量读：" + ENV_APP_ID + " / " + ENV_BASE_URL
@@ -690,6 +732,12 @@ public final class AgentServer implements AutoCloseable {
 
         private boolean allowWrite;
 
+        private HttpAccessPolicy httpAccess;
+
+        private int httpTimeoutMs = 15000;
+
+        private int httpMaxResponseBytes = 65536;
+
         private String system;
 
         private LlmClient llm;
@@ -707,12 +755,15 @@ public final class AgentServer implements AutoCloseable {
             config.appId = env(ENV_APP_ID, null);
             config.baseUrl = env(ENV_BASE_URL, DEFAULT_BASE_URL);
             config.model = env(ENV_MODEL, DEFAULT_MODEL);
+            final List<String> allowedHosts = new ArrayList<String>();
             for (int i = 0; i < args.length; i++) {
                 String arg = args[i];
                 if ("--help".equals(arg) || "-h".equals(arg)) {
                     config.help = true;
                 } else if ("--allow-write".equals(arg)) {
                     config.allowWrite = true;
+                } else if ("--allow-host".equals(arg)) {
+                    allowedHosts.add(value(args, ++i, arg));
                 } else if ("--port".equals(arg)) {
                     config.port = number(arg, value(args, ++i, arg));
                 } else if ("--bind".equals(arg)) {
@@ -732,6 +783,10 @@ public final class AgentServer implements AutoCloseable {
                 } else {
                     throw new IllegalArgumentException("unknown option: " + arg);
                 }
+            }
+            if (!allowedHosts.isEmpty()) {
+                config.httpAccess = HttpAccessPolicy.hosts(
+                        allowedHosts.toArray(new String[allowedHosts.size()]));
             }
             return config;
         }
@@ -804,6 +859,31 @@ public final class AgentServer implements AutoCloseable {
         /** 放行一切文件写入；等价于 {@code approval(request -> true)} */
         public Config allowWrite(boolean allowWrite) {
             this.allowWrite = allowWrite;
+            return this;
+        }
+
+        /**
+         * 启用 http 工具并给定访问策略；传 null 表示不装配 http 工具。
+         * 策略对每一跳重定向都会重新求值。
+         */
+        public Config httpAccess(HttpAccessPolicy policy) {
+            this.httpAccess = policy;
+            return this;
+        }
+
+        /** 便捷写法：按主机白名单启用 http 工具，语义见 {@link HttpAccessPolicy#hosts} */
+        public Config httpHosts(String... hosts) {
+            this.httpAccess = HttpAccessPolicy.hosts(hosts);
+            return this;
+        }
+
+        public Config httpTimeoutMs(int httpTimeoutMs) {
+            this.httpTimeoutMs = httpTimeoutMs;
+            return this;
+        }
+
+        public Config httpMaxResponseBytes(int httpMaxResponseBytes) {
+            this.httpMaxResponseBytes = httpMaxResponseBytes;
             return this;
         }
 
@@ -880,6 +960,18 @@ public final class AgentServer implements AutoCloseable {
 
         public boolean allowWrite() {
             return allowWrite;
+        }
+
+        public HttpAccessPolicy httpAccess() {
+            return httpAccess;
+        }
+
+        public int httpTimeoutMs() {
+            return httpTimeoutMs;
+        }
+
+        public int httpMaxResponseBytes() {
+            return httpMaxResponseBytes;
         }
 
         public String system() {

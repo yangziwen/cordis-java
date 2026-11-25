@@ -20,6 +20,8 @@ import cordis.agent.LlmClient;
 import cordis.agent.LlmMessage;
 import cordis.agent.LlmReply;
 import cordis.agent.Tool;
+import cordis.agent.ToolService;
+import cordis.agent.http.HttpAccessPolicy;
 import cordis.app.AgentServer;
 
 /**
@@ -71,6 +73,7 @@ public final class AgentServerDemo {
         int failures;
         try {
             failures = runSelftest(server.port());
+            failures += runHttpSelftest(root);
         } finally {
             server.close();
         }
@@ -190,6 +193,107 @@ public final class AgentServerDemo {
             failures++;
         }
         return failures;
+    }
+
+    /**
+     * HTTP 工具在<b>正式装配</b>（{@code AgentServer.start()}）下的可见性：
+     * 默认不挂（白名单默认拒绝 = 不给模型这种能力），显式配置后两个工具出现，
+     * 并且真能打穿一次本地请求。
+     */
+    private static int runHttpSelftest(Path root) throws Exception {
+        int failures = 0;
+
+        AgentServer plain = new AgentServer(selftestConfig(root.resolve("no-http"))).start();
+        try {
+            JsonNode health = call("http://127.0.0.1:" + plain.port() + "/health", "GET", null);
+            boolean disabledOk = "disabled".equals(health.path("http").asText())
+                    && !toolList(health).contains("http_get");
+            System.out.println("   " + (disabledOk ? "[PASS]" : "[FAIL]")
+                    + " 未配置白名单 → http=" + health.path("http").asText()
+                    + ", " + health.path("tools").size() + " tools");
+            if (!disabledOk) {
+                failures++;
+            }
+        } finally {
+            plain.close();
+        }
+
+        AgentServer server = new AgentServer(selftestConfig(root.resolve("with-http"))
+                .httpAccess(HttpAccessPolicy.hosts("127.0.0.1"))).start();
+        try {
+            String base = "http://127.0.0.1:" + server.port();
+            JsonNode health = call(base + "/health", "GET", null);
+            boolean enabledOk = "enabled".equals(health.path("http").asText())
+                    && "allowlist".equals(health.path("httpScope").asText())
+                    && toolList(health).contains("http_get")
+                    && toolList(health).contains("http_post");
+            System.out.println("   " + (enabledOk ? "[PASS]" : "[FAIL]")
+                    + " 配置白名单后 → http=" + health.path("http").asText()
+                    + ", " + health.path("tools").size() + " tools");
+            if (!enabledOk) {
+                failures++;
+            }
+
+            // 端到端：拿正式装配出来的工具打自己的 /health（白名单命中）
+            Tool get = findTool(server.context().get("agent.tools"), "http_get");
+            JsonNode result = JSON.readTree(get.run("{\"url\":\"" + base + "/health\"}"));
+            boolean callOk = result.path("status").asInt() == 200
+                    && result.path("body").asText().contains("\"status\":\"ok\"");
+            System.out.println("   " + (callOk ? "[PASS]" : "[FAIL]")
+                    + " http_get 打自己的 /health → HTTP " + result.path("status").asInt()
+                    + ", " + result.path("bytes").asInt() + " bytes");
+            if (!callOk) {
+                failures++;
+            }
+        } finally {
+            server.close();
+        }
+
+        // 全开放行：httpScope 必须是 all，不然运维看不出自己在全开模式下
+        AgentServer open = new AgentServer(selftestConfig(root.resolve("open-http"))
+                .httpHosts("*")).start();
+        try {
+            JsonNode health = call("http://127.0.0.1:" + open.port() + "/health", "GET", null);
+            boolean openOk = "enabled".equals(health.path("http").asText())
+                    && "all".equals(health.path("httpScope").asText())
+                    && toolList(health).contains("http_get");
+            System.out.println("   " + (openOk ? "[PASS]" : "[FAIL]")
+                    + " --allow-host '*' → http=" + health.path("http").asText()
+                    + ", scope=" + health.path("httpScope").asText());
+            if (!openOk) {
+                failures++;
+            }
+        } finally {
+            open.close();
+        }
+        return failures;
+    }
+
+    /** 自检用的 server 配置（与主流程同构，只少了 sleep 工具） */
+    private static AgentServer.Config selftestConfig(Path root) {
+        return new AgentServer.Config()
+                .port(0)
+                .root(root)
+                .llm(new OfflineLlm())
+                .approval(request -> true)
+                .initializer(AgentServerDemo::seedWorkspace);
+    }
+
+    private static List<String> toolList(JsonNode health) {
+        List<String> names = new ArrayList<String>();
+        for (JsonNode name : health.path("tools")) {
+            names.add(name.asText());
+        }
+        return names;
+    }
+
+    private static Tool findTool(ToolService tools, String name) {
+        for (Tool tool : tools.snapshot()) {
+            if (tool.name().equals(name)) {
+                return tool;
+            }
+        }
+        throw new IllegalStateException("tool not registered: " + name);
     }
 
     /** 一次响应里所有 tool 事件的工具名（用于验证事件不串台） */
