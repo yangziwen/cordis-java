@@ -16,6 +16,7 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import okio.BufferedSource;
 
 /**
  * HTTP 客户端服务：把 OkHttp 的异步调用桥接成框架的一等提案 {@link Promise}。
@@ -47,16 +48,28 @@ public class HttpService extends Service {
     /** 由插件构建并注入，生命周期与插件一致 */
     private final OkHttpClient client;
 
+    /**
+     * 流式专用客户端：与 {@link #client} 各自持有一个 Dispatcher，
+     * 因此长连接打满自己的并发额度时，普通请求不受任何影响。
+     */
+    private final OkHttpClient streamClient;
+
     private final MediaType json = MediaType.parse("application/json; charset=utf-8");
 
-    public HttpService(Context ctx, OkHttpClient client) {
+    public HttpService(Context ctx, OkHttpClient client, OkHttpClient streamClient) {
         super(ctx, "http");
         this.client = client;
+        this.streamClient = streamClient;
     }
 
     /** 底层客户端（需要配置拦截器、连接池等高级能力时使用） */
     public OkHttpClient client() {
         return client;
+    }
+
+    /** 流式专用客户端 */
+    public OkHttpClient streamClient() {
+        return streamClient;
     }
 
     /**
@@ -96,6 +109,100 @@ public class HttpService extends Service {
     public Promise<HttpResponse> postJson(String url, String jsonBody) {
         RequestBody body = RequestBody.create(json, jsonBody);
         return execute(new Request.Builder().url(url).post(body).build());
+    }
+
+    /**
+     * 建立一次 SSE 订阅（{@code text/event-stream}），事件到达即回调。
+     *
+     * <p><b>与 {@link #execute} 的区别是"什么时候算完成"</b>：普通请求在 body
+     * 读完时一次性结算；SSE 的 body 是无限长的，边读边派发，永远不"读完"，
+     * 只能被对端关闭、网络中断或调用方取消。因此这里返回的不是
+     * {@code Promise<结果>}，而是一个可取消的句柄 {@link SseCall}：
+     * 事件走 listener 的推送通道，结束走 {@code completion()}。
+     *
+     * <p><b>线程</b>：整个读循环跑在 OkHttp Dispatcher 线程上（一次订阅长期
+     * 占用该池的一个线程，这是长连接的固有成本，也是流式流量单独走一个
+     * client 的原因）。listener 的约束见 {@link SseListener}。
+     *
+     * <p>HTTP 非 2xx 视为失败，body 前若干字符会带在异常消息里；2xx 但不是
+     * {@code text/event-stream} 也照常解析——有些网关会改 Content-Type，
+     * 内容对不对由读到的行决定，不额外设卡。
+     */
+    public SseCall stream(final Request request, final SseListener listener) {
+        final Call call = streamClient.newCall(request);
+        final Deferred<Void> completion = ctx.scheduler.defer();
+        final SseCall sse = new SseCall(call, completion);
+
+        call.enqueue(new Callback() {
+
+            @Override
+            public void onResponse(Call ignored, Response response) {
+                if (sse.isDisposed()) {
+                    response.close();
+                    return;
+                }
+                if (!response.isSuccessful()) {
+                    sse.fail(new IOException("sse request failed: HTTP " + response.code()
+                            + " " + snippet(response)));
+                    return;
+                }
+                ResponseBody body = response.body();
+                if (body == null) {
+                    sse.fail(new IOException("sse response has no body"));
+                    return;
+                }
+                // 读循环直到流结束或被 cancel() 打断（后者会抛 IOException）
+                try (ResponseBody closing = body) {
+                    SseParser parser = new SseParser();
+                    BufferedSource source = closing.source();
+                    String line;
+                    while (!sse.isDisposed() && (line = source.readUtf8Line()) != null) {
+                        SseEvent event = parser.accept(line);
+                        if (event == null) {
+                            continue;
+                        }
+                        try {
+                            listener.onEvent(event);
+                        } catch (RuntimeException e) {
+                            // 监听器自己炸了：连带掐断连接，避免空转读数据
+                            sse.fail(e);
+                            call.cancel();
+                            return;
+                        }
+                    }
+                    if (!sse.isDisposed()) {
+                        SseEvent tail = parser.flush();
+                        if (tail != null) {
+                            listener.onEvent(tail);
+                        }
+                        sse.completeOk();
+                    }
+                } catch (IOException e) {
+                    // 被取消时的 IOException 是 cancel 的副产物，不算失败
+                    sse.fail(e);
+                }
+            }
+
+            @Override
+            public void onFailure(Call ignored, IOException e) {
+                sse.fail(e);
+            }
+
+        });
+        return sse;
+    }
+
+    /** 取错误响应体的前 200 字符，避免把一个 HTML 错误页整个塞进异常消息 */
+    private static String snippet(Response response) {
+        try (ResponseBody body = response.body()) {
+            if (body == null) {
+                return "";
+            }
+            String text = body.string();
+            return text.length() > 200 ? text.substring(0, 200) + "..." : text;
+        } catch (IOException e) {
+            return "<unreadable body: " + e + ">";
+        }
     }
 
     @Override

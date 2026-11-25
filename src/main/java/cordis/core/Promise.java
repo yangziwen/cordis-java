@@ -286,7 +286,7 @@ public class Promise<T> {
         if (error instanceof RuntimeException) {
             throw (RuntimeException) error;
         }
-        throw new IllegalStateException("promise rejected", error);
+        throw new IllegalStateException("promise rejected: " + error, error);
     }
 
     public State state() {
