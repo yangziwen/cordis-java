@@ -21,8 +21,8 @@ import cordis.agent.LlmMessage;
 import cordis.agent.LlmReply;
 import cordis.agent.Tool;
 import cordis.agent.ToolService;
-import cordis.agent.http.HttpAccessPolicy;
 import cordis.app.AgentServer;
+import cordis.http.HttpAccessPolicy;
 
 /**
  * {@code cordis.app.AgentServer} 的回归入口（正式实现在 app 包，本类只负责

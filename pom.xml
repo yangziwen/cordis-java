@@ -47,5 +47,22 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.17.2</version>
         </dependency>
+
+        <!--
+            Playwright（无头浏览器）：只给 cordis.browser 能力层用，内核与 agent
+            包不依赖它。1.65.1 官方要求 Java 8+，主 pom 仍是 source/target 8。
+
+            代价必须知道：
+            - driver-bundle 这个 jar 有 229MB（内含 node 与 playwright driver），
+              会拖慢构建与镜像，别把它打进 fat jar；
+            - 首次运行会下载浏览器二进制（chromium ~192MB + headless shell ~101MB）。
+              生产镜像要预装并设 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1，否则启动时会
+              联网下载（而且是全部浏览器，不只是 chromium）。
+        -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.65.1</version>
+        </dependency>
     </dependencies>
 </project>

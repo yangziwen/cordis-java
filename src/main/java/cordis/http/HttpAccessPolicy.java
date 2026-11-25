@@ -1,4 +1,4 @@
-package cordis.agent.http;
+package cordis.http;
 
 import java.net.URI;
 import java.util.ArrayList;

@@ -17,10 +17,10 @@ import cordis.agent.LlmClient;
 import cordis.agent.LlmReply;
 import cordis.agent.Tool;
 import cordis.agent.ToolService;
-import cordis.agent.http.HttpAccessPolicy;
 import cordis.agent.http.HttpTools;
 import cordis.core.Context;
 import cordis.core.Fiber;
+import cordis.http.HttpAccessPolicy;
 import cordis.http.HttpPlugin;
 import cordis.util.Maps;
 
