@@ -37,6 +37,17 @@ public class SqliteService extends Service {
         }
     }
 
+    /**
+     * 已有连接的构造：供异步插件使用“扩展池建连 → 主循环登记服务”的两段式
+     * 初始化（见 SqlitePlugin.applyAsync）。注意 ctx.provide 在本构造中执行，
+     * 必须发生在主循环线程上。
+     */
+    public SqliteService(Context ctx, String url, Connection connection) {
+        super(ctx, "sqlite");
+        this.url = url;
+        this.connection = connection;
+    }
+
     public String getUrl() {
         return url;
     }

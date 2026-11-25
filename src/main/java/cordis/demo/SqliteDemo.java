@@ -105,10 +105,14 @@ public class SqliteDemo {
 
         // 6. 重新加载：repo 自动复活
         //    注意：新的 :memory: 连接是全新的空库——连接即库，这正是服务随 fiber 生灭的体现
+        //    建连是异步的（扩展池），awaitIdle 只等主循环、等不到 worker，
+        //    所以这里必须 await() 等待重新挂载完成
         System.out.println("\n-- registry.use(\"sqlite\") again --");
-        root.registry.use(SqlitePlugin.INSTANCE,
+        Fiber dbFiber2 = root.registry.use(SqlitePlugin.INSTANCE,
                 Maps.of("url", "jdbc:sqlite::memory:"), Maps.of());
+        dbFiber2.await().join();
         root.scheduler.awaitIdle();
+        System.out.println("dbFiber2  = " + dbFiber2);
         System.out.println("repoFiber = " + repoFiber);
         System.out.println("root.has(\"sqlite\") = " + root.has("sqlite"));
 
