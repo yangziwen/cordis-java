@@ -89,6 +89,54 @@ public class SqliteService extends Service {
         queryOne("SELECT 1");
     }
 
+    /**
+     * 在一个事务里执行一组操作：正常返回则提交，抛出 RuntimeException 则整体
+     * 回滚并把原异常抛出去。
+     *
+     * <p>为什么需要它：{@link #execute} 每次都是独立的隐式事务（auto-commit），
+     * 所以"一次逻辑操作里的多条 INSERT"要么全成、要么全不成这件事，只能由
+     * 调用方在这里显式表达。典型场景是落一条对话轮次——写到一半失败留下的
+     * 半条记录比一条都没写更糟。
+     *
+     * <p><b>不可嵌套</b>：JDBC 没有嵌套事务（SQLite 的 SAVEPOINT 能模拟，
+     * 本项目用不到）。<b>不做并发保护</b>：连接是共享单例，同一个 Connection
+     * 上的并发事务本来就没有独立语义，调用方需自行保证同一时刻只有一个事务
+     * （目前的调用点都在单个扩展池任务里）。
+     */
+    public void transaction(Runnable work) {
+        boolean autoCommit;
+        try {
+            autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+        } catch (SQLException e) {
+            throw new IllegalStateException("sqlite begin transaction failed", e);
+        }
+        try {
+            work.run();
+            connection.commit();
+        } catch (RuntimeException e) {
+            rollback();
+            throw e;
+        } catch (SQLException e) {
+            rollback();
+            throw new IllegalStateException("sqlite commit failed", e);
+        } finally {
+            try {
+                connection.setAutoCommit(autoCommit);
+            } catch (SQLException e) {
+                System.err.println("[sqlite] restore auto-commit failed: " + e);
+            }
+        }
+    }
+
+    private void rollback() {
+        try {
+            connection.rollback();
+        } catch (SQLException e) {
+            System.err.println("[sqlite] rollback failed: " + e);
+        }
+    }
+
     /** 关闭连接：由插件返回的清理函数调用（fiber 卸载时触发） */
     public void close() {
         try {

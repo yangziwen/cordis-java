@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import cordis.agent.AgentPlugin;
+import cordis.agent.AgentResult;
 import cordis.agent.AgentService;
 import cordis.agent.LlmMessage;
 import cordis.agent.LlmReply;
@@ -136,10 +137,12 @@ public final class OpenAiAgentDemo {
                 + "再挑 ToolCallAggregator.java 用 read_file 读它开头 30 行，"
                 + "最后用一句话说明这个类的作用。";
         long start = System.currentTimeMillis();
-        String answer = agent.run(history, prompt).completion().join();
+        AgentResult result = agent.run(history, prompt).completion().join();
         long cost = System.currentTimeMillis() - start;
 
-        System.out.println("   终答: " + answer);
+        System.out.println("   终答: " + result.answer);
+        System.out.println("   终态: " + result.stopReason + "，" + result.steps + " 轮，"
+                + result.toolCalls + " 次工具");
         System.out.println("   耗时 " + cost + "ms，历史 " + history.size() + " 条 "
                 + roles(history));
         long toolMessages = history.stream().filter(m -> "tool".equals(m.role)).count();

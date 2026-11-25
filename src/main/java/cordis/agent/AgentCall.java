@@ -13,7 +13,7 @@ import cordis.core.Promise;
  *
  * <pre>
  *   AgentCall call = agent.run(history, "现在几点了？");
- *   call.completion().then(answer -&gt; ...).catchError(e -&gt; ...);
+ *   call.completion().then(result -&gt; ...).catchError(e -&gt; ...);
  *   call.dispose();                     // 不等了
  * </pre>
  *
@@ -27,16 +27,16 @@ import cordis.core.Promise;
  */
 public final class AgentCall implements Disposable {
 
-    private final Deferred<String> completion;
+    private final Deferred<AgentResult> completion;
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
-    AgentCall(Deferred<String> completion) {
+    AgentCall(Deferred<AgentResult> completion) {
         this.completion = completion;
     }
 
-    /** run 结束（终答 / 失败 / 被取消）时结算，值为最终回答文本 */
-    public Promise<String> completion() {
+    /** run 结束（终答 / 失败 / 被取消）时结算；结果里的 stopReason 说明怎么结束的 */
+    public Promise<AgentResult> completion() {
         return completion.promise();
     }
 
@@ -53,9 +53,9 @@ public final class AgentCall implements Disposable {
     }
 
     /** 终答；已取消时忽略 */
-    void complete(String answer) {
+    void complete(AgentResult result) {
         if (!cancelled.get()) {
-            completion.resolve(answer);
+            completion.resolve(result);
         }
     }
 

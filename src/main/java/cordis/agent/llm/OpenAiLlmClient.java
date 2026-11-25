@@ -84,6 +84,12 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
     /** 流结束哨兵：网关在最后一条 data 里发它，随后关闭连接 */
     private static final String STREAM_DONE = "[DONE]";
 
+    /** 输出被 max_tokens 截断——不是正常终答 */
+    private static final String FINISH_LENGTH = "length";
+
+    /** 输出被内容安全策略拦截 */
+    private static final String FINISH_CONTENT_FILTER = "content_filter";
+
     /** 完整的 chat/completions 地址（baseUrl 已在构造时归一化） */
     private final String endpoint;
 
@@ -281,7 +287,9 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
         if (choices == null || !choices.isArray() || choices.size() == 0) {
             throw new IOException("llm response has no choices: " + abbreviate(root.toString()));
         }
-        JsonNode message = choices.get(0).path("message");
+        JsonNode choice = choices.get(0);
+        requireFinishReason(text(choice.get("finish_reason")));
+        JsonNode message = choice.path("message");
         String content = text(message.get("content"));
         JsonNode calls = message.get("tool_calls");
         if (calls == null || !calls.isArray() || calls.size() == 0) {
@@ -365,6 +373,7 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
             return false;                       // 只携带 usage 的收尾块
         }
         JsonNode delta = choices.get(0).get("delta");
+        requireFinishReason(text(choices.get(0).get("finish_reason")));
         if (delta == null || !delta.isObject()) {
             return false;
         }
@@ -410,6 +419,23 @@ public final class OpenAiLlmClient implements LlmClient, Disposable {
         } catch (JsonProcessingException e) {
             throw new IOException("tool call \"" + call.name + "\" (" + call.id
                     + ") carries truncated arguments: " + abbreviate(arguments), e);
+        }
+    }
+
+    /**
+     * {@code finish_reason} 是唯一能识别"输出被截断"的信号：与 OpenAI 一致，
+     * 长度打满时网关仍返回 200 + 半截内容。忽略它就会把半截答案当成终答
+     * 交给调用方（实测 deepseek 系列会出现 {@code finish_reason=length}
+     * 且 {@code content} 为空）。
+     */
+    private static void requireFinishReason(String finishReason) throws IOException {
+        if (FINISH_LENGTH.equals(finishReason)) {
+            throw new IOException("llm output truncated: finish_reason=length"
+                    + " (raise max_tokens or shorten the history)");
+        }
+        if (FINISH_CONTENT_FILTER.equals(finishReason)) {
+            throw new IOException("llm output blocked by content filter"
+                    + " (finish_reason=content_filter)");
         }
     }
 

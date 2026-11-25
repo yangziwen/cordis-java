@@ -2,8 +2,10 @@ package cordis.agent;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import cordis.core.Context;
 import cordis.core.Promise;
@@ -26,11 +28,15 @@ import cordis.sqlite.SqliteService;
  * <p>{@code tool_calls} 列存 {@link ToolCallCodec} 的转义分隔符格式——
  * SQLite 没有 JSON 类型，也不必为它引入 JSON 库。
  *
- * <h3>seq 的原子分配</h3>
+ * <h3>seq 的原子分配与写入事务</h3>
  *
- * <p>{@link SqliteService} 没有暴露事务 API，本服务也不需要：每条消息用
- * <b>单条</b> {@code INSERT ... SELECT COALESCE(MAX(seq),0)+1} 落库，SQLite
- * 的单语句本身就是原子的，并发追加不会拿到重复 seq，也不会互相覆盖。
+ * <p>{@code seq} 由<b>单条</b> {@code INSERT ... SELECT COALESCE(MAX(seq),0)+1}
+ * 在数据库侧分配：SQLite 的单语句本身就是原子的，并发追加不会拿到重复
+ * seq，也不会互相覆盖。
+ *
+ * <p>而一轮对话的多条消息用 {@link SqliteService#transaction} 包起来——
+ * "同时可见"不等于"各自原子"：半条轮次（有 assistant 的 tool_calls、没有
+ * tool 结果）会让下次 load 得到一段非法历史。
  *
  * <h3>线程模型</h3>
  *
@@ -41,6 +47,9 @@ import cordis.sqlite.SqliteService;
  * {@code *Sync} 会 fail-fast——那等于让整个调度器陪着 JDBC 一起停摆。
  */
 public class MemoryService extends Service {
+
+    /** 读历史时丢弃了尾部不完整的工具调用组：(sessionId, droppedCount) */
+    public static final String EVT_REPAIRED = "memory/repaired";
 
     private static final String DDL_SESSIONS =
             "CREATE TABLE IF NOT EXISTS sessions ("
@@ -108,7 +117,56 @@ public class MemoryService extends Service {
                     ToolCallCodec.decode((String) row.get("tool_calls")),
                     (String) row.get("tool_call_id")));
         }
+        List<LlmMessage> repaired = repairTail(history);
+        if (repaired.size() != history.size()) {
+            ctx.events.emit(EVT_REPAIRED, sessionId, history.size() - repaired.size());
+        }
+        return repaired;
+    }
+
+    /**
+     * 丢掉尾部不完整的工具调用组——这是"读侧修复"，不改库里的数据。
+     *
+     * <p>为什么必须有：OpenAI 协议要求每条 {@code role:"tool"} 消息紧跟声明了
+     * 对应 {@code tool_call_id} 的 assistant 消息。如果库里存了一条 assistant
+     * 的 {@code tool_calls} 却没存齐它的结果（历史遗留数据、外部直接写库、
+     * 早期没有事务的版本写了一半），把这段历史原样送给模型会被网关直接 400，
+     * 而且这个会话从此永久不可用。截在第一条不完整的位置，至少让会话还能继续。
+     *
+     * <p>只有<b>尾部</b>可能不完整：中间的缺口意味着这一轮之后还有对话，那是
+     * 脏数据，但不在本方法的职责范围内——按同样规则在中途截断反而会丢掉
+     * 后面所有正常消息。
+     *
+     * <p>返回的列表可变（调用方 AgentService 会往上追加）。
+     */
+    private static List<LlmMessage> repairTail(List<LlmMessage> history) {
+        for (int i = 0; i < history.size(); i++) {
+            LlmMessage message = history.get(i);
+            if (!"assistant".equals(message.role) || message.toolCalls.isEmpty()) {
+                continue;
+            }
+            if (answered(history, i, message.toolCalls)) {
+                continue;
+            }
+            return new ArrayList<>(history.subList(0, i));
+        }
         return history;
+    }
+
+    /** 紧跟在第 index 条之后的 tool 消息是否把这批调用全部配对上了 */
+    private static boolean answered(List<LlmMessage> history, int index, List<ToolCall> calls) {
+        Set<String> pending = new HashSet<>();
+        for (ToolCall call : calls) {
+            pending.add(call.id);
+        }
+        for (int j = index + 1; j < history.size(); j++) {
+            LlmMessage next = history.get(j);
+            if (!"tool".equals(next.role)) {
+                break;
+            }
+            pending.remove(next.toolCallId);
+        }
+        return pending.isEmpty();
     }
 
     /** 会话列表，最近更新的在前 */
@@ -158,20 +216,24 @@ public class MemoryService extends Service {
         if (messages == null || messages.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
-        db.execute("INSERT OR IGNORE INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
-                sessionId, now, now);
-        for (LlmMessage message : messages) {
-            db.execute(INSERT_MESSAGE,
-                    sessionId,
-                    message.role,
-                    message.content,
-                    ToolCallCodec.encode(message.toolCalls),
-                    message.toolCallId,
-                    now,
-                    sessionId);
-        }
-        db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", now, sessionId);
+        final long now = System.currentTimeMillis();
+        // 一轮对话的若干条消息必须同时可见：写一半留下的"assistant 声明了
+        // tool_calls 却没有 tool 结果"会让下次 load 拿到一轮非法历史
+        db.transaction(() -> {
+            db.execute("INSERT OR IGNORE INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
+                    sessionId, now, now);
+            for (LlmMessage message : messages) {
+                db.execute(INSERT_MESSAGE,
+                        sessionId,
+                        message.role,
+                        message.content,
+                        ToolCallCodec.encode(message.toolCalls),
+                        message.toolCallId,
+                        now,
+                        sessionId);
+            }
+            db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", now, sessionId);
+        });
     }
 
     /** 删除会话及其全部消息 */

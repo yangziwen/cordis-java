@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 
 import cordis.agent.AgentCall;
 import cordis.agent.AgentPlugin;
+import cordis.agent.AgentResult;
 import cordis.agent.AgentService;
 import cordis.agent.LlmClient;
 import cordis.agent.LlmMessage;
@@ -75,8 +76,10 @@ public final class AgentDemo {
     private static void sectionLoop(AgentService agent) {
         System.out.println("== 1. agent loop：工具调用 -> 回填 -> 终答 ==");
         List<LlmMessage> history = new ArrayList<>();
-        String answer = agent.run(history, "6 乘 7 是多少？").completion().join();
-        System.out.println("   终答: " + answer);
+        AgentResult result = agent.run(history, "6 乘 7 是多少？").completion().join();
+        System.out.println("   终答: " + result.answer);
+        System.out.println("   终态: " + result.stopReason + "，" + result.steps + " 轮，"
+                + result.toolCalls + " 次工具");
         System.out.println("   历史 " + history.size() + " 条: "
                 + history.get(0).role + " -> " + history.get(1).role
                 + " -> " + history.get(2).role + " -> " + history.get(3).role);
@@ -93,8 +96,10 @@ public final class AgentDemo {
         root.scheduler.awaitIdle();
 
         List<LlmMessage> history = new ArrayList<>();
-        String answer = agent.run(history, "现在几点？顺便算下 2x3。").completion().join();
-        System.out.println("   终答: " + answer);
+        AgentResult result = agent.run(history, "现在几点？顺便算下 2x3。").completion().join();
+        System.out.println("   终答: " + result.answer);
+        System.out.println("   终态: " + result.stopReason + "，" + result.steps + " 轮，"
+                + result.toolCalls + " 次工具");
         System.out.println("   math 已卸载，期间模型请求 math 得到错误回填，转向 clock");
         System.out.println();
     }

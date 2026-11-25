@@ -20,8 +20,9 @@ import cordis.core.Disposable;
  *       一个执着的模型可以无限请求工具。</li>
  * </ul>
  *
- * <p>apply 返回的清理为空：两个服务的撤销由 fiber 的 provisions 机制自动
- * 完成（Service 构造时已登记），本插件没有额外资源。
+ * <p>apply 返回的清理只做一件事：关掉 {@link AgentService} 的工具并发池
+ * （本插件唯一的自有资源）。两个服务的注册由 fiber 的 provisions 机制自动
+ * 撤销（Service 构造时已登记），无需在这里重复。
  */
 public class AgentPlugin implements Component {
 
@@ -46,9 +47,8 @@ public class AgentPlugin implements Component {
 
         // 同一 fiber 内直接传引用：两个服务同生共死，不存在解析时序问题
         ToolService tools = new ToolService(ctx);
-        new AgentService(ctx, (LlmClient) llm, tools, maxSteps);
-        return () -> {
-        };
+        final AgentService agent = new AgentService(ctx, (LlmClient) llm, tools, maxSteps);
+        return () -> agent.shutdown();
     }
 
     private static long number(Map<String, Object> config, String key, long fallback) {

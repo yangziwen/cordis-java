@@ -58,7 +58,7 @@ public class ConversationService extends Service {
             try {
                 List<LlmMessage> history = memory.loadSync(sessionId);
                 int before = history.size();
-                String answer = agent.runBlocking(history, input, call);
+                AgentResult result = agent.runBlocking(history, input, call);
                 List<LlmMessage> produced =
                         new ArrayList<>(history.subList(before, history.size()));
                 try {
@@ -66,7 +66,7 @@ public class ConversationService extends Service {
                 } catch (RuntimeException e) {
                     ctx.events.emit(EVT_PERSIST_ERROR, e);
                 }
-                call.complete(answer);
+                call.complete(result);
             } catch (Throwable t) {
                 call.fail(t);
             }

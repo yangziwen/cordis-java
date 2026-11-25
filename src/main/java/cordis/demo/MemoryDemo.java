@@ -89,8 +89,8 @@ public final class MemoryDemo {
     private static void sectionFirstTurns(Context root) {
         System.out.println("== 1. 会话 " + SESSION + "：两轮对话 ==");
         ConversationService conv = root.get("conversation");
-        System.out.println("   第 1 轮: " + conv.send(SESSION, "我叫小明").completion().join());
-        System.out.println("   第 2 轮: " + conv.send(SESSION, "我叫什么？").completion().join());
+        System.out.println("   第 1 轮: " + conv.send(SESSION, "我叫小明").completion().join().answer);
+        System.out.println("   第 2 轮: " + conv.send(SESSION, "我叫什么？").completion().join().answer);
         System.out.println();
     }
 
@@ -111,7 +111,7 @@ public final class MemoryDemo {
     private static void sectionThirdTurn(Context root) {
         System.out.println("== 3. 第三轮：新装配的 agent 接着旧对话 ==");
         ConversationService conv = root.get("conversation");
-        System.out.println("   第 3 轮: " + conv.send(SESSION, "我叫什么？").completion().join());
+        System.out.println("   第 3 轮: " + conv.send(SESSION, "我叫什么？").completion().join().answer);
         System.out.println();
     }
 
