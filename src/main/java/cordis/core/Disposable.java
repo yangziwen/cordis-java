@@ -8,5 +8,7 @@ package cordis.core;
  */
 @FunctionalInterface
 public interface Disposable {
+
     void dispose();
+
 }

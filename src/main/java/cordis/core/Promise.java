@@ -27,11 +27,16 @@ public class Promise<T> {
     public enum State { PENDING, FULFILLED, REJECTED }
 
     private final Scheduler scheduler;
+
     /** 仅供 join() 阻塞等待；状态迁移同样在此监视器下进行 */
     private final Object monitor = new Object();
+
     private State state = State.PENDING;
+
     private T value;
+
     private Throwable error;
+
     /** 待通知回调；只在主循环访问 */
     private List<Runnable> listeners;
 
@@ -305,8 +310,11 @@ public class Promise<T> {
 
     /** allSettled 的单项结果（对应 {@code {status, value/reason}}） */
     public static final class Settled<T> {
+
         public final boolean success;
+
         public final T value;
+
         public final Throwable error;
 
         Settled(boolean success, T value, Throwable error) {
@@ -319,5 +327,7 @@ public class Promise<T> {
         public String toString() {
             return success ? "ok(" + value + ")" : "error(" + error + ")";
         }
+
     }
+
 }

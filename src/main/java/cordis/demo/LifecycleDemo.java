@@ -38,6 +38,7 @@ public class LifecycleDemo {
 
     /** 一个简单的服务，对应 extends Service 的具名单例 */
     static class DatabaseService extends Service {
+
         final String url;
 
         DatabaseService(Context ctx, String url) {
@@ -53,6 +54,7 @@ public class LifecycleDemo {
         public String toString() {
             return "DatabaseService(" + url + ")";
         }
+
     }
 
     /**
@@ -93,6 +95,7 @@ public class LifecycleDemo {
      * 调度其他插件，等价于 TS 中插件返回 Promise / Netty 中不阻塞 EventLoop。
      */
     static final Component SLOW_INIT = new Component() {
+
         @Override
         public String getName() {
             return "slow-init";
@@ -115,6 +118,7 @@ public class LifecycleDemo {
                                 + Thread.currentThread().getName());
             });
         }
+
     };
 
     public static void main(String[] argv) throws Exception {
@@ -237,4 +241,5 @@ public class LifecycleDemo {
 
         root.scheduler.shutdown();
     }
+
 }

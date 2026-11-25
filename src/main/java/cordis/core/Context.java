@@ -24,8 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * 留一个看起来生效实际没人读的半成品 API。
  */
 public class Context {
+
     /** 父上下文（extend 链），根上下文为 null */
     public final Context parent;
+
     /** 根上下文：服务仓库、registry、events 都由它持有并全树共享 */
     public final Context root;
 
@@ -41,8 +43,10 @@ public class Context {
 
     /** 组件注册表（共享，对应 RegistryService 挂在根上下文上） */
     public final Registry registry;
+
     /** 事件系统（共享，对应 EventsService 挂在根上下文上） */
     public final EventsService events;
+
     /**
      * 调度中枢：主循环 + 扩展阻塞池（挂在根上下文，全树共享）。
      * 所有生命周期状态迁移与事件派发都在主循环上串行执行；
@@ -227,4 +231,5 @@ public class Context {
         }
         return null;
     }
+
 }

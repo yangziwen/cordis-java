@@ -38,6 +38,7 @@ public interface Component {
      */
     static Component named(String name, Component delegate) {
         return new Component() {
+
             @Override
             public String getName() {
                 return name;
@@ -47,6 +48,7 @@ public interface Component {
             public Disposable apply(Context ctx, Map<String, Object> config) {
                 return delegate.apply(ctx, config);
             }
+
         };
     }
 
@@ -79,4 +81,5 @@ public interface Component {
             return Promise.rejected(ctx.scheduler, t);
         }
     }
+
 }

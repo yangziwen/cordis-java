@@ -24,6 +24,7 @@ import java.util.Map;
 public class SqliteService extends Service {
 
     private final String url;
+
     private final Connection connection;
 
     /**
@@ -107,4 +108,5 @@ public class SqliteService extends Service {
     public String toString() {
         return "SqliteService(" + url + ")";
     }
+
 }

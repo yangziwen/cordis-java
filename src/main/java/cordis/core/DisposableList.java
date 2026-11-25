@@ -14,7 +14,9 @@ import java.util.List;
  * - 遍历顺序 = 头部条目（按插入的逆序）+ 尾部条目（按插入顺序）。
  */
 public class DisposableList<T> implements Iterable<T> {
+
     private final List<T> head = new ArrayList<>();
+
     private final List<T> tail = new ArrayList<>();
 
     public int size() {
@@ -70,4 +72,5 @@ public class DisposableList<T> implements Iterable<T> {
         }
         return false;
     }
+
 }

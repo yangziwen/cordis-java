@@ -37,4 +37,5 @@ public final class Deferred<T> {
     public void reject(Throwable error) {
         promise.reject(error);
     }
+
 }

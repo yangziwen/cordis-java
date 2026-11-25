@@ -20,8 +20,10 @@ import java.util.Objects;
  * 拿到字段尚未赋完值的实例。
  */
 public abstract class Service {
+
     /** 服务名，同时也是它在上下文中的访问键 */
     public final String name;
+
     /** 服务所属的定义处上下文（def site，对应 this.ctx） */
     protected final Context ctx;
 
@@ -45,4 +47,5 @@ public abstract class Service {
     public String toString() {
         return "Service(" + name + ")";
     }
+
 }

@@ -23,6 +23,7 @@ public class EventsService {
 
     /** 事件名 -> 监听器列表（头部优先 + 尾部追加，见 DisposableList 的 prepend 语义） */
     private final Map<String, DisposableList<Hook>> hooks = new LinkedHashMap<>();
+
     private final Scheduler scheduler;
 
     public EventsService(Scheduler scheduler) {
@@ -309,4 +310,5 @@ public class EventsService {
             }
         }
     }
+
 }

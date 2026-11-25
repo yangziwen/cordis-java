@@ -11,5 +11,7 @@ package cordis.core;
  */
 @FunctionalInterface
 public interface EventListener {
+
     Object invoke(Object... args);
+
 }

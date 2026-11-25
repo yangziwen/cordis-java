@@ -13,12 +13,16 @@ import java.util.List;
  * 可见性：包内协作类（Registry / Fiber），字段不做 public 暴露。
  */
 public class Runtime {
+
     final String name;
+
     final Component callback;
+
     final List<Fiber> fibers = new ArrayList<>();
 
     Runtime(String name, Component callback) {
         this.name = name;
         this.callback = callback;
     }
+
 }

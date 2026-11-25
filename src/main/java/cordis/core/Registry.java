@@ -2,7 +2,6 @@ package cordis.core;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -19,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class Registry {
 
     private final Context ctx;
+
     /**
      * 组件 -> 运行时档案（对应 _internal：Map&lt;Function, Component.Runtime&gt;）。
      * 写只在主循环，但 {@link #size()} 是 public 且常被测试/编排层从外部轮询，
@@ -126,4 +126,5 @@ public class Registry {
             internal.remove(runtime.callback, runtime);     // 双参数移除，避免误删重建后的新档案
         }
     }
+
 }

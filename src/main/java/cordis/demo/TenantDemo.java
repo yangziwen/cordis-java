@@ -36,6 +36,7 @@ import cordis.util.Maps;
 public class TenantDemo {
 
     static class DbService extends Service {
+
         final String url;
 
         DbService(Context ctx, String url) {
@@ -47,6 +48,7 @@ public class TenantDemo {
         public String toString() {
             return "DbService(" + url + ")";
         }
+
     }
 
     /** 数据库插件：每次激活在自己的分支上提供一个 DatabaseService */
@@ -107,4 +109,5 @@ public class TenantDemo {
 
         root.scheduler.shutdown();
     }
+
 }

@@ -24,6 +24,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 public final class Scheduler {
 
     private final ScheduledThreadPoolExecutor mainLoop;
+
     /**
      * “当前线程是不是主循环线程”的标记。
      * 不能用 Thread 引用做判定：主循环线程一旦因异常被线程池替换，旧引用就永远
@@ -31,8 +32,10 @@ public final class Scheduler {
      * ThreadLocal 随线程出生/消亡自动失效，替换后新线程会在首个任务里重新打标。
      */
     private final ThreadLocal<Boolean> onMainLoop = new ThreadLocal<>();
+
     /** 仅供诊断/日志展示的当前主循环线程（线程被替换时自动刷新） */
     private volatile Thread mainThread;
+
     private final ExecutorService blockingPool;
 
     public Scheduler() {
@@ -181,4 +184,5 @@ public final class Scheduler {
     public Thread mainLoopThread() {
         return mainThread;
     }
+
 }

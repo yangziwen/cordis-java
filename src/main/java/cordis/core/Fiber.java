@@ -30,16 +30,22 @@ import java.util.function.Supplier;
  *   编排层用它等待当前生命周期事务结算
  */
 public class Fiber {
+
     /** 本 fiber 对应的上下文（一个 extend 出来的子上下文，对应 this.ctx） */
     public final Context ctx;
+
     /** 调用 use() 的上下文（注册 effect 的宿主），根 fiber 为 null */
     private final Context parent;
+
     /** 插件名（对应 runtime.name） */
     public final String name;
+
     /** 插件主体（对应 runtime.callback） */
     public final Component component;
+
     /** 插件配置（对应 config） */
     public final Map<String, Object> config;
+
     /** 声明的依赖：服务名 -> 要求（对应 inject） */
     public final Map<String, Object> inject;
 
@@ -52,16 +58,22 @@ public class Fiber {
      * 构造阶段不触碰任何共享登记表。
      */
     private Runtime runtime;
+
     /** 本 fiber 提供的服务（对应 provisions），卸载时随之撤销 */
     final List<Service> provisions = new ArrayList<>();
+
     /** 本 fiber 收集的所有可逆 effect（对应 _disposables） */
     private final DisposableList<Disposable> disposables = new DisposableList<>();
+
     /** 注册在父 fiber 上的 effect，dispose 时把整个插件从父上下文上撤销 */
     private Disposable registration;
+
     /** 当前正在飞的生命周期事务（对应 TS inertia）：非 null 表示有 reload 未结算，await() 等它 */
     private Promise<Void> inertia;
+
     /** 对应 runner.epoch：effect 是否仍然有效 */
     private boolean epochActive;
+
     /**
      * 最近一次加载失败原因（对应 _error）。
      * volatile：只在主循环写入，但 {@link #getError()} 是 public，
@@ -398,4 +410,5 @@ public class Fiber {
     public String toString() {
         return "Fiber(" + name + ", " + state + ")";
     }
+
 }
