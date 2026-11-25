@@ -143,6 +143,11 @@ public class HttpDemo {
         root.scheduler.awaitIdle();
 
         server.stop(0);
+        // 必须撤销 http 插件：OkHttp 的 Dispatcher 线程不是 daemon，
+        // 不 shutdown 会让 JVM 在该退出的地方挂住（脚本/CI 里表现为"卡死"）
+        fetcherFiber.dispose();
+        httpAgain.dispose();
+        root.scheduler.awaitIdle();
         root.scheduler.shutdown();
     }
 

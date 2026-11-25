@@ -57,6 +57,19 @@ public final class LlmMessage {
         return new LlmMessage("tool", content, Collections.<ToolCall>emptyList(), toolCallId);
     }
 
+    /**
+     * 从持久化存储还原一条消息（{@link MemoryService} 专用）。
+     * 走包级私有而非公开工厂：role 取值本应由工厂方法约束，
+     * 任意字符串只应该从数据库里来。
+     */
+    static LlmMessage restore(String role, String content, List<ToolCall> toolCalls,
+                              String toolCallId) {
+        List<ToolCall> calls = toolCalls == null || toolCalls.isEmpty()
+                ? Collections.<ToolCall>emptyList()
+                : Collections.unmodifiableList(new java.util.ArrayList<>(toolCalls));
+        return new LlmMessage(role, content, calls, toolCallId);
+    }
+
     @Override
     public String toString() {
         if ("tool".equals(role)) {

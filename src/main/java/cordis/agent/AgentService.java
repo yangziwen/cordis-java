@@ -72,7 +72,7 @@ public class AgentService extends Service {
         final AgentCall call = new AgentCall(ctx.scheduler.defer());
         ctx.scheduler.offload(() -> {
             try {
-                call.complete(loop(history, input, call));
+                call.complete(runBlocking(history, input, call));
             } catch (Throwable t) {
                 call.fail(t);
             }
@@ -81,8 +81,14 @@ public class AgentService extends Service {
         return call;
     }
 
-    /** loop 主体；运行在扩展池 worker 上，允许阻塞 */
-    private String loop(List<LlmMessage> history, String input, AgentCall call) throws Exception {
+    /**
+     * loop 主体（同步，允许阻塞）。
+     *
+     * <p>包级私有：供 {@link ConversationService} 在自己的 offload 里
+     * 把"读历史 → 跑 loop → 写历史"串成一个任务，避免在 worker 上再
+     * offload 一次白占一个线程。调用方必须保证自己不在主循环上。
+     */
+    String runBlocking(List<LlmMessage> history, String input, AgentCall call) throws Exception {
         history.add(LlmMessage.user(input));
         for (int step = 1; step <= maxSteps; step++) {
             if (call.isCancelled()) {
