@@ -44,17 +44,33 @@ public class Registry {
      * 1. fiber 的专属上下文是 caller 的子节点，因此 caller 分支上的
      *    isolate/intercept 标签都会被继承（多租户隔离的关键）；
      * 2. 插件的整个生命周期注册为 caller 沿父链解析出的 fiber 的 effect。
+     *
+     * 线程模型：use() 可以在任意线程调用（同步返回 PENDING 状态的 fiber），
+     * 但档案登记与挂载一律投递到主循环执行，共享的 internal / fibers 只在
+     * 主循环上读写。
      */
-    public Fiber use(Context caller, Component component,
+    public Fiber use(final Context caller, final Component component,
                      Map<String, Object> config, Map<String, Object> inject) {
-        Runtime runtime = internal.computeIfAbsent(component, c -> new Runtime(nameOf(c), c));
-        final Fiber fiber = new Fiber(caller, runtime,
+        final String name = nameOf(component);
+        // Fiber 构造只动自己新派生的上下文，不触碰任何共享表：
+        // 因此可以在任意线程安全地创建并立即返回给调用方。
+        final Fiber fiber = new Fiber(caller, name, component,
                 config == null ? Collections.<String, Object>emptyMap() : config,
                 inject == null ? Collections.<String, Object>emptyMap() : inject);
-        runtime.fibers.add(fiber);
-        // 挂载动作投递到主循环：use() 立即返回 fiber（可能仍是 PENDING），
-        // 挂载完成时 fiber.await() 会结算——对应 await fiber
-        ctx.scheduler.execute(fiber::register);
+        // 档案登记与挂载全部收敛到主循环：internal / runtime.fibers 是主循环
+        // 侧（onServiceChanged 遍历）与本调用共用的可变结构，跨线程写会丢更新。
+        ctx.scheduler.execute(() -> {
+            Runtime runtime = internal.computeIfAbsent(component, c -> new Runtime(name, c));
+            runtime.fibers.add(fiber);
+            fiber.attachRuntime(runtime);
+            try {
+                fiber.register();
+            } catch (Throwable t) {
+                // 注册失败（典型：在已销毁的上下文上 use）也要让 fiber 可观测地失败，
+                // 否则它会停在 PENDING、await() 却返回成功。
+                fiber.fail(t);
+            }
+        });
         return fiber;
     }
 

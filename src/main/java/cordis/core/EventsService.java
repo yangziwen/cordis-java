@@ -30,23 +30,41 @@ public class EventsService {
 
     /**
      * 对应 on()：注册监听器并返回 Disposable。
-     * 注册动作投递到主循环执行；监听器包装为 {@link Hook} 并注册为调用方
-     * 所在 fiber 的 effect，fiber 卸载时自动解绑。
+     *
+     * 注册动作与 effect 绑定都在主循环上完成：
+     * - 监听器包装为 {@link Hook} 加入 hooks；
+     * - 注册/解绑整对动作再包成 caller 所在 fiber 的 effect——fiber 卸载时
+     *   由 {@link Fiber#unload()} 逆序执行清理，监听器随之解绑并重载时重新
+     *   注册。这一步不可省略：漏绑会导致旧监听器在 fiber 卸载后继续派发，
+     *   持有已关闭的连接/过期的服务引用。
      */
-    public Disposable on(Context caller, String name, final EventListener listener) {
+    public Disposable on(final Context caller, final String name, final EventListener listener) {
         final Hook[] holder = new Hook[1];
+        final Disposable[] bound = new Disposable[1];
         final boolean[] removed = {false};
         scheduler.execute(() -> {
-            Hook hook = new Hook(caller, listener);
+            if (removed[0]) return;
+            final Hook hook = new Hook(caller, listener);
             holder[0] = hook;
-            if (!removed[0]) {
-                hooks.computeIfAbsent(name, k -> new ArrayList<>()).add(hook);
+            final Fiber owner = caller.fiber();
+            if (owner != null && owner.acceptsEffects()) {
+                // 注册动作即 effect 本体：立即执行一次，返回的清理函数负责解绑
+                bound[0] = owner.effect(() -> {
+                    hooks.computeIfAbsent(name, k -> new ArrayList<Hook>()).add(hook);
+                    return () -> unregister(name, hook);
+                }, "events.on(" + name + ")");
+            } else {
+                // 宿主 fiber 已失效（或不存在）：退化为无主监听器，仅由调用方手动解绑
+                hooks.computeIfAbsent(name, k -> new ArrayList<Hook>()).add(hook);
             }
         });
         return () -> scheduler.execute(() -> {
             removed[0] = true;
-            Hook hook = holder[0];
-            if (hook != null) unregister(name, hook);
+            if (bound[0] != null) {
+                bound[0].dispose();          // 走 fiber 的 effect 清理，等价于解绑 + 摘除 effect
+            } else if (holder[0] != null) {
+                unregister(name, holder[0]);
+            }
         });
     }
 

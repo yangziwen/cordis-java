@@ -49,17 +49,49 @@ public final class Scheduler {
     /**
      * 把任务投递到主循环。已在主循环线程则内联执行（对应 Netty 的
      * inEventLoop 优化，避免无谓的队列往返）。
+     *
+     * 任务内的异常在此统一捕获并记录：主循环是 ScheduledThreadPoolExecutor，
+     * 直接 execute 会把 Runnable 包进 FutureTask，异常被吞进 outcome、既不打
+     * 日志也不触发 uncaughtExceptionHandler——fiber 会静默停在 PENDING。
+     * 因此这里显式兜底，让失败可观测。
      */
-    public void execute(Runnable task) {
+    public void execute(final Runnable task) {
         if (inMainLoop()) {
-            task.run();
+            runSafely(task);
         } else {
             try {
-                mainLoop.execute(task);
+                mainLoop.execute(() -> runSafely(task));
             } catch (RejectedExecutionException e) {
                 // 调度器已停机：丢弃尾声任务（停机后不再受理新回调，
                 // 与 Netty 停机后拒绝写入的行为一致）
             }
+        }
+    }
+
+    /** 主循环任务的统一异常出口（对应 TS 侧未捕获异常的 logger.error） */
+    private static void runSafely(Runnable task) {
+        try {
+            task.run();
+        } catch (Throwable t) {
+            System.err.println("[cordis] main-loop task failed: " + t);
+            t.printStackTrace();
+        }
+    }
+
+    public boolean isInMainLoop() {
+        return inMainLoop();
+    }
+
+    /**
+     * 断言当前线程是主循环线程。
+     * 框架内部状态（fiber 状态机、hooks、serviceStore、provisions）只在
+     * 主循环上读写，跨线程触碰属于编程错误，应在发生点 fail-fast。
+     */
+    public void assertInMainLoop(String what) {
+        if (!inMainLoop()) {
+            throw new IllegalStateException(what
+                    + " must run on the main loop, but was called from \""
+                    + Thread.currentThread().getName() + "\"");
         }
     }
 

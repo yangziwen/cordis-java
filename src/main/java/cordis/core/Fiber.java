@@ -45,8 +45,12 @@ public class Fiber {
 
     public FiberState state = FiberState.PENDING;
 
-    /** 本 fiber 的运行时登记信息（对应 runtime），根 fiber 为 null */
-    private final Runtime runtime;
+    /**
+     * 本 fiber 的运行时登记信息（对应 runtime），根 fiber 为 null。
+     * 非 final：档案在主循环的 use() 任务里挂上（见 Registry.use），
+     * 构造阶段不触碰任何共享登记表。
+     */
+    private Runtime runtime;
     /** 本 fiber 提供的服务（对应 provisions），卸载时随之撤销 */
     final List<Service> provisions = new ArrayList<>();
     /** 本 fiber 收集的所有可逆 effect（对应 _disposables） */
@@ -76,17 +80,30 @@ public class Fiber {
     /**
      * 插件 fiber，对应 Fiber 构造函数中 runtime != null 的分支。
      * 构造只做登记，不挂载——挂载由 {@link #register()} 在主循环上执行。
+     * 名字/主体直接取自组件定义，因此可以在任意线程构造（字段均为本实例私有）。
      */
-    Fiber(Context parent, Runtime runtime,
+    Fiber(Context parent, String name, Component component,
           Map<String, Object> config, Map<String, Object> inject) {
         this.ctx = parent.extend();
         this.parent = parent;
         ctx.setFiber(this);
-        this.runtime = runtime;
-        this.name = runtime.name;
-        this.component = runtime.callback;
+        this.name = name;
+        this.component = component;
         this.config = config;
         this.inject = inject;
+    }
+
+    /** 在主循环上绑定运行时档案（对应 registry._internal 中的登记） */
+    void attachRuntime(Runtime runtime) {
+        this.runtime = runtime;
+    }
+
+    /**
+     * 本 fiber 现在能否接受新的 effect：已销毁或已失效（epochActive=false）
+     * 的 fiber 上不能再注册资源，否则资源会随 fiber 一起变成孤儿。
+     */
+    public boolean acceptsEffects() {
+        return epochActive && state != FiberState.DISPOSED;
     }
 
     /**
@@ -151,9 +168,14 @@ public class Fiber {
      * 对应 fiber.effect(execute, label)。
      * 立即执行 execute 一次，收集它（可选）返回的清理函数；返回的 Disposable
      * 会把这些清理函数按注册的逆序执行，并把 effect 从本 fiber 上移除。
+     *
+     * <b>必须在主循环上调用</b>：effect 表是本 fiber 的共享状态，且 execute
+     * 会立即执行——跨线程注册既破坏无锁前提，也会让清理顺序不可预期。
      */
     public Disposable effect(Supplier<Disposable> execute, String label) {
         assertActive();
+        // effect 表是本 fiber 的共享状态，只在主循环上读写
+        ctx.scheduler.assertInMainLoop("fiber.effect(" + label + ")");
         List<Disposable> collected = new ArrayList<>();
         Disposable unwind = () -> {
             for (int i = collected.size() - 1; i >= 0; i--) collected.get(i).dispose();
@@ -219,9 +241,11 @@ public class Fiber {
                 })
                 .catchError(e -> {
                     if (!epochActive) return null;
-                    error = e;
-                    state = FiberState.FAILED;
-                    System.err.println("[cordis] fiber \"" + name + "\" failed: " + e);
+                    // 失败即回滚：apply 里可能已经 provide 了服务、注册了监听器，
+                    // 不回收会让服务名被永久占用（后续 reload 必然撞名冲突），
+                    // 连接/监听器也会泄漏。对应 TS _reload 失败分支的清理。
+                    rollback();
+                    fail(e);
                     return null;
                 })
                 // 对应 TS _reload 收尾的 inertia = undefined：事务结束；
@@ -235,6 +259,22 @@ public class Fiber {
      */
     private void unload() {
         state = FiberState.UNLOADING;
+        disposeAll();
+        releaseProvisions();
+        if (epochActive) state = FiberState.PENDING;
+    }
+
+    /**
+     * 加载失败后的回滚：apply 已经注册的 effect（监听器等）与已发布的服务
+     * 全部撤销，让 fiber 回到可重试的干净状态。
+     */
+    private void rollback() {
+        disposeAll();
+        releaseProvisions();
+    }
+
+    /** 逆序执行并清空本 fiber 收集的 effect */
+    private void disposeAll() {
         List<Disposable> all = disposables.clear();
         for (int i = all.size() - 1; i >= 0; i--) {
             try {
@@ -244,11 +284,25 @@ public class Fiber {
                 System.err.println("[cordis] error while unloading \"" + name + "\": " + e);
             }
         }
+    }
+
+    /** 撤销本 fiber 提供的全部服务，对应 provisions 的清理 */
+    private void releaseProvisions() {
         for (Service s : new ArrayList<>(provisions)) {
             ctx.unprovide(s.name, s);
         }
         provisions.clear();
-        if (epochActive) state = FiberState.PENDING;
+    }
+
+    /**
+     * 把本 fiber 标记为加载失败。
+     * 主循环上执行；await() 会以该 error reject，而不是静默返回成功。
+     */
+    void fail(Throwable e) {
+        if (state == FiberState.DISPOSED) return;
+        error = e;
+        state = FiberState.FAILED;
+        System.err.println("[cordis] fiber \"" + name + "\" failed: " + e);
     }
 
     /** 服务出现/消失时由 Registry 回调（对应 internal/service 事件触发的刷新） */

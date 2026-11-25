@@ -131,6 +131,9 @@ public class Context {
      * - 若提供者已经 ACTIVE，通知等待该服务的 fiber（对应 reflect.notify）。
      */
     void provide(String name, Service service) {
+        // serviceStore / isolate 表是全树共享的可变结构，且 provide 会同步唤醒
+        // 依赖者（触发其它 fiber 的状态迁移）——只能在主循环上执行。
+        scheduler.assertInMainLoop("Context.provide(" + name + ")");
         Object key = isolateLabel(name);
         if (key == null) {
             key = new Object();
@@ -156,6 +159,7 @@ public class Context {
 
     /** 服务撤销，对应 provide 返回的清理函数中删除 store 条目 */
     void unprovide(String name, Service service) {
+        scheduler.assertInMainLoop("Context.unprovide(" + name + ")");
         Object key = isolateLabel(name);
         if (key != null && root.serviceStore.get(key) == service) {
             root.serviceStore.remove(key);
