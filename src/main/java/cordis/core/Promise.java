@@ -67,7 +67,9 @@ public class Promise<T> {
     private void complete(State s, T v, Throwable e) {
         Runnable[] toRun;
         synchronized (monitor) {
-            if (state != State.PENDING) return;   // 幂等：首个完成生效，后续忽略
+            if (state != State.PENDING) {
+                return;                       // 幂等：首个完成生效，后续忽略
+            }
             state = s;
             value = v;
             error = e;
@@ -77,7 +79,9 @@ public class Promise<T> {
         }
         // 回调在监视器外执行，避免用户回调与 join() 互相卡死
         if (toRun != null) {
-            for (Runnable r : toRun) r.run();
+            for (Runnable r : toRun) {
+                r.run();
+            }
         }
     }
 
@@ -87,7 +91,9 @@ public class Promise<T> {
             if (state != State.PENDING) {
                 action.run();
             } else {
-                if (listeners == null) listeners = new ArrayList<>();
+                if (listeners == null) {
+                    listeners = new ArrayList<>();
+                }
                 listeners.add(action);
             }
         });
@@ -171,8 +177,11 @@ public class Promise<T> {
             } catch (Throwable t) {
                 System.err.println("[cordis] promise handle callback failed: " + t);
             }
-            if (state == State.REJECTED) next.reject(error);
-            else next.fulfill(value);
+            if (state == State.REJECTED) {
+                next.reject(error);
+            } else {
+                next.fulfill(value);
+            }
         });
         return next;
     }
@@ -190,7 +199,9 @@ public class Promise<T> {
             return result.promise();
         }
         final List<T> values = new ArrayList<>(promises.size());
-        for (int i = 0; i < promises.size(); i++) values.add(null);
+        for (int i = 0; i < promises.size(); i++) {
+            values.add(null);
+        }
         final int[] remaining = {promises.size()};
         for (int i = 0; i < promises.size(); i++) {
             final int index = i;
@@ -201,7 +212,9 @@ public class Promise<T> {
                     return;
                 }
                 values.set(index, p.value);
-                if (--remaining[0] == 0) result.resolve(new ArrayList<T>(values));
+                if (--remaining[0] == 0) {
+                    result.resolve(new ArrayList<T>(values));
+                }
             });
         }
         return result.promise();
@@ -219,14 +232,18 @@ public class Promise<T> {
             return result.promise();
         }
         final List<Settled<T>> outcomes = new ArrayList<>(promises.size());
-        for (int i = 0; i < promises.size(); i++) outcomes.add(null);
+        for (int i = 0; i < promises.size(); i++) {
+            outcomes.add(null);
+        }
         final int[] remaining = {promises.size()};
         for (int i = 0; i < promises.size(); i++) {
             final int index = i;
             final Promise<T> p = promises.get(index);
             p.onSettled(() -> {
                 outcomes.set(index, new Settled<T>(p.state == State.FULFILLED, p.value, p.error));
-                if (--remaining[0] == 0) result.resolve(new ArrayList<Settled<T>>(outcomes));
+                if (--remaining[0] == 0) {
+                    result.resolve(new ArrayList<Settled<T>>(outcomes));
+                }
             });
         }
         return result.promise();
@@ -258,8 +275,12 @@ public class Promise<T> {
                 }
             }
         }
-        if (state == State.FULFILLED) return value;
-        if (error instanceof RuntimeException) throw (RuntimeException) error;
+        if (state == State.FULFILLED) {
+            return value;
+        }
+        if (error instanceof RuntimeException) {
+            throw (RuntimeException) error;
+        }
         throw new IllegalStateException("promise rejected", error);
     }
 
@@ -272,8 +293,12 @@ public class Promise<T> {
     @Override
     public String toString() {
         synchronized (monitor) {
-            if (state == State.PENDING) return "Promise(PENDING)";
-            if (state == State.FULFILLED) return "Promise(FULFILLED, " + value + ")";
+            if (state == State.PENDING) {
+                return "Promise(PENDING)";
+            }
+            if (state == State.FULFILLED) {
+                return "Promise(FULFILLED, " + value + ")";
+            }
             return "Promise(REJECTED, " + error + ")";
         }
     }

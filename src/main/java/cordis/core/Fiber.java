@@ -182,7 +182,9 @@ public class Fiber {
 
     /** 对应 assertActive()：在已销毁的上下文上创建 effect 属于 INACTIVE_EFFECT 错误 */
     public void assertActive() {
-        if (epochActive) return;
+        if (epochActive) {
+            return;
+        }
         throw new IllegalStateException("cannot create effect on inactive context (INACTIVE_EFFECT)");
     }
 
@@ -200,12 +202,16 @@ public class Fiber {
         ctx.scheduler.assertInMainLoop("fiber.effect(" + label + ")");
         List<Disposable> collected = new ArrayList<>();
         Disposable unwind = () -> {
-            for (int i = collected.size() - 1; i >= 0; i--) collected.get(i).dispose();
+            for (int i = collected.size() - 1; i >= 0; i--) {
+                collected.get(i).dispose();
+            }
             collected.clear();
         };
         try {
             Disposable d = execute.get();
-            if (d != null) collected.add(d);
+            if (d != null) {
+                collected.add(d);
+            }
         } catch (RuntimeException e) {
             unwind.dispose(); // 对应 catch 分支中的 dispose()
             throw e;
@@ -222,9 +228,13 @@ public class Fiber {
      * 之间迁移（对应基于 epoch 字符串的依赖追踪，此处简化为布尔判断）。
      */
     void refresh() {
-        if (!epochActive || state == FiberState.DISPOSED) return;
+        if (!epochActive || state == FiberState.DISPOSED) {
+            return;
+        }
         if (dependenciesSatisfied()) {
-            if (state != FiberState.ACTIVE) reload();
+            if (state != FiberState.ACTIVE) {
+                reload();
+            }
         } else if (state == FiberState.ACTIVE || state == FiberState.FAILED) {
             unload();
         }
@@ -232,7 +242,9 @@ public class Fiber {
 
     private boolean dependenciesSatisfied() {
         for (String name : inject.keySet()) {
-            if (ctx.get(name) == null) return false;
+            if (ctx.get(name) == null) {
+                return false;
+            }
         }
         return true;
     }
@@ -254,10 +266,14 @@ public class Fiber {
                 .then(cleanup -> {
                     // 等待期间可能已被 dispose/依赖消失：丢弃迟到的结果
                     if (!epochActive || state != FiberState.LOADING) {
-                        if (cleanup != null) cleanup.dispose();
+                        if (cleanup != null) {
+                            cleanup.dispose();
+                        }
                         return (Void) null;
                     }
-                    if (cleanup != null) disposables.push(cleanup);
+                    if (cleanup != null) {
+                        disposables.push(cleanup);
+                    }
                     error = null;
                     state = FiberState.ACTIVE;
                     // 对应 _updateState 中 ACTIVE 变更时的 provisions 通知：
@@ -268,7 +284,9 @@ public class Fiber {
                     return (Void) null;
                 })
                 .catchError(e -> {
-                    if (!epochActive) return null;
+                    if (!epochActive) {
+                        return null;
+                    }
                     // 失败即回滚：apply 里可能已经 provide 了服务、注册了监听器，
                     // 不回收会让服务名被永久占用（后续 reload 必然撞名冲突），
                     // 连接/监听器也会泄漏。对应 TS _reload 失败分支的清理。
@@ -279,7 +297,9 @@ public class Fiber {
                 // 对应 TS _reload 收尾的 inertia = undefined：
                 // 只清理属于自己的事务（期间可能已经是新一次 reload 的事务）
                 .handle((v, err) -> {
-                    if (this.inertia == inFlight) this.inertia = null;
+                    if (this.inertia == inFlight) {
+                        this.inertia = null;
+                    }
                     transaction.resolve((Void) null);
                 });
     }
@@ -292,7 +312,9 @@ public class Fiber {
         state = FiberState.UNLOADING;
         disposeAll();
         releaseProvisions();
-        if (epochActive) state = FiberState.PENDING;
+        if (epochActive) {
+            state = FiberState.PENDING;
+        }
     }
 
     /**
@@ -330,7 +352,9 @@ public class Fiber {
      * 主循环上执行；await() 会以该 error reject，而不是静默返回成功。
      */
     void fail(Throwable e) {
-        if (state == FiberState.DISPOSED) return;
+        if (state == FiberState.DISPOSED) {
+            return;
+        }
         error = e;
         state = FiberState.FAILED;
         System.err.println("[cordis] fiber \"" + name + "\" failed: " + e);
@@ -350,7 +374,9 @@ public class Fiber {
      */
     public void dispose() {
         ctx.scheduler.execute(() -> {
-            if (runtime == null) return;                 // 根 fiber 不可销毁
+            if (runtime == null) {                        // 根 fiber 不可销毁
+                return;
+            }
             if (state != FiberState.DISPOSED) {
                 if (registration != null) {
                     registration.dispose();              // 走父 fiber 的 effect 清理 → markDisposed

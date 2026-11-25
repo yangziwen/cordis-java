@@ -153,7 +153,9 @@ public final class Scheduler {
      * 注意：只保证“提交时刻之前入队”的任务执行完毕。
      */
     public void awaitIdle() {
-        if (inMainLoop()) return;   // 自己等自己 = 死锁，直接跳过
+        if (inMainLoop()) {
+            return;                  // 自己等自己 = 死锁，直接跳过
+        }
         try {
             mainLoop.submit(() -> {
                 onMainLoop.set(Boolean.TRUE);        // 屏障任务同样打标，保持线程判定一致

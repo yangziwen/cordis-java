@@ -104,7 +104,9 @@ public class Registry {
     void onServiceChanged(String name) {
         for (Runtime runtime : new ArrayList<>(internal.values())) {
             for (Fiber fiber : new ArrayList<>(runtime.fibers)) {
-                if (fiber.inject.containsKey(name)) fiber.onDependenciesChanged();
+                if (fiber.inject.containsKey(name)) {
+                    fiber.onDependenciesChanged();
+                }
             }
         }
     }
@@ -116,7 +118,9 @@ public class Registry {
      */
     void retire(Fiber fiber) {
         Runtime runtime = fiber.runtime();
-        if (runtime == null) return;                       // 根 fiber 不在档案里
+        if (runtime == null) {
+            return;                                     // 根 fiber 不在档案里
+        }
         runtime.fibers.remove(fiber);
         if (runtime.fibers.isEmpty()) {
             internal.remove(runtime.callback, runtime);     // 双参数移除，避免误删重建后的新档案

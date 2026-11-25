@@ -49,7 +49,9 @@ public class DisposableList<T> implements Iterable<T> {
     /** 当前遍历顺序的快照（头部逆序 + 尾部顺序） */
     public List<T> snapshot() {
         List<T> values = new ArrayList<>(size());
-        for (int i = head.size() - 1; i >= 0; i--) values.add(head.get(i));
+        for (int i = head.size() - 1; i >= 0; i--) {
+            values.add(head.get(i));
+        }
         values.addAll(tail);
         return values;
     }

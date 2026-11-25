@@ -19,7 +19,9 @@ public class Maps {
                     "Maps.of expects key/value pairs, but got " + kv.length + " arguments");
         }
         Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        for (int i = 0; i < kv.length; i += 2) {
+            m.put((String) kv[i], kv[i + 1]);
+        }
         return m;
     }
 

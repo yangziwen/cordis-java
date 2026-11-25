@@ -53,7 +53,9 @@ public class EventsService {
         final Disposable[] bound = new Disposable[1];
         final boolean[] removed = {false};
         scheduler.execute(() -> {
-            if (removed[0]) return;
+            if (removed[0]) {
+                return;
+            }
             final Hook hook = new Hook(caller, listener);
             holder[0] = hook;
             final Fiber owner = caller.fiber();
@@ -81,8 +83,11 @@ public class EventsService {
     /** 把 hook 加入指定事件的列表；仅主循环调用 */
     private void register(String name, Hook hook, boolean prepend) {
         DisposableList<Hook> list = hooks.computeIfAbsent(name, k -> new DisposableList<Hook>());
-        if (prepend) list.unshift(hook);
-        else list.push(hook);
+        if (prepend) {
+            list.unshift(hook);
+        } else {
+            list.push(hook);
+        }
     }
 
     /** 对应 once()：先移除自身，再执行监听器 */
@@ -99,9 +104,13 @@ public class EventsService {
     private List<Hook> snapshot(String name) {
         DisposableList<Hook> all = hooks.get(name);
         List<Hook> result = new ArrayList<>();
-        if (all == null) return result;
+        if (all == null) {
+            return result;
+        }
         for (Hook hook : all) {
-            if (!hook.removed) result.add(hook);
+            if (!hook.removed) {
+                result.add(hook);
+            }
         }
         return result;
     }
@@ -174,9 +183,13 @@ public class EventsService {
         // 直接 resolve，而不是等待其结算（异步监听器从此失效）。
         if (out instanceof Promise) {
             ((Promise<Object>) out).handle((v, err) -> {
-                if (err != null) result.reject(err);
-                else if (isBailed(v)) result.resolve(v);
-                else runSerial(result, hooks, index + 1, args);
+                if (err != null) {
+                    result.reject(err);
+                } else if (isBailed(v)) {
+                    result.resolve(v);
+                } else {
+                    runSerial(result, hooks, index + 1, args);
+                }
             });
         } else if (isBailed(out)) {
             result.resolve(out);
@@ -214,8 +227,11 @@ public class EventsService {
         }
         if (out instanceof Promise) {
             ((Promise<Object>) out).handle((v, err) -> {
-                if (err != null) result.reject(err);
-                else runWaterfall(result, hooks, index + 1, args, v);
+                if (err != null) {
+                    result.reject(err);
+                } else {
+                    runWaterfall(result, hooks, index + 1, args, v);
+                }
             });
         } else {
             runWaterfall(result, hooks, index + 1, args, out);
@@ -243,8 +259,11 @@ public class EventsService {
                 }
                 if (out instanceof Promise) {
                     ((Promise<Object>) out).handle((v, err) -> {
-                        if (err != null) d.reject(err);
-                        else d.resolve(v);
+                        if (err != null) {
+                            d.reject(err);
+                        } else {
+                            d.resolve(v);
+                        }
                     });
                 } else {
                     d.resolve(out);
@@ -253,14 +272,18 @@ public class EventsService {
             Promise.<Object>allSettled(scheduler, outcomes).then(settled -> {
                 List<Throwable> errors = new ArrayList<>();
                 for (Promise.Settled<Object> s : settled) {
-                    if (!s.success && s.error != null) errors.add(s.error);
+                    if (!s.success && s.error != null) {
+                        errors.add(s.error);
+                    }
                 }
                 if (errors.isEmpty()) {
                     result.resolve(null);
                 } else {
                     IllegalStateException error = new IllegalStateException(
                             "one or more listeners of event \"" + name + "\" failed");
-                    for (Throwable t : errors) error.addSuppressed(t);
+                    for (Throwable t : errors) {
+                        error.addSuppressed(t);
+                    }
                     result.reject(error);
                 }
                 return null;
@@ -281,7 +304,9 @@ public class EventsService {
         DisposableList<Hook> list = hooks.get(name);
         if (list != null) {
             list.delete(hook);
-            if (list.size() == 0) hooks.remove(name);
+            if (list.size() == 0) {
+                hooks.remove(name);
+            }
         }
     }
 }

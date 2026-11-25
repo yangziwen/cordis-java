@@ -98,7 +98,9 @@ public class Context {
      */
     public Fiber fiber() {
         for (Context c = this; c != null; c = c.parent) {
-            if (c.fiber != null) return c.fiber;
+            if (c.fiber != null) {
+                return c.fiber;
+            }
         }
         return null; // 理论上不可达：根上下文构造时必有 fiber
     }
@@ -165,7 +167,9 @@ public class Context {
         // 裸上下文上构造的服务沿父链归属到祖先 fiber 的 provisions
         // （对应 TS 原型链解析出的 ctx.fiber）
         Fiber current = fiber();
-        if (current != null) current.provisions.add(service);
+        if (current != null) {
+            current.provisions.add(service);
+        }
         if (current == null || current.state == FiberState.ACTIVE) {
             // 推迟一拍再广播：provide 通常在 Service 构造器里调用（见 Service 的
             // 说明），此刻子类字段还没赋值。立即唤醒会让依赖者拿到半初始化的
@@ -194,11 +198,19 @@ public class Context {
     @SuppressWarnings("unchecked")
     public <T extends Service> T get(String name) {
         Object key = isolateLabel(name);
-        if (key == null) return null;
+        if (key == null) {
+            return null;
+        }
         Service s = root.serviceStore.get(key);
-        if (s == null) return null;
-        if (s.ctx.fiber().state != FiberState.ACTIVE) return null;
-        if (!s.applicable(this)) return null;
+        if (s == null) {
+            return null;
+        }
+        if (s.ctx.fiber().state != FiberState.ACTIVE) {
+            return null;
+        }
+        if (!s.applicable(this)) {
+            return null;
+        }
         return (T) s;
     }
 
@@ -209,7 +221,9 @@ public class Context {
     /** 沿父链查找服务名的隔离标签，对应 [symbols.isolate] 的原型链查找 */
     Object isolateLabel(String name) {
         for (Context c = this; c != null; c = c.parent) {
-            if (c.isolate.containsKey(name)) return c.isolate.get(name);
+            if (c.isolate.containsKey(name)) {
+                return c.isolate.get(name);
+            }
         }
         return null;
     }
