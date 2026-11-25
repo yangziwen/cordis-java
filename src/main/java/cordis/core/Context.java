@@ -10,15 +10,18 @@ import java.util.Map;
  * Java 没有等价的元编程能力，这里改用显式的 {@link #get}，但核心机制一一对应：
  *
  * - 上下文构成一棵 extend 树（对应 Object.create 原型链），
- *   isolate / intercept 表沿父链做影子查找；
+ *   isolate 表沿父链做影子查找；
  * - 服务仓库是全局共享的（对应 ReflectService.store，它只挂在根上下文上），
  *   以“隔离标签”为主键。第一次 provide 时在根上下文登记默认标签
  *   （对应 {@code root[symbols.isolate][name] ??= Symbol(name)}），
  *   因此默认情况下兄弟插件可以互相解析服务；
  * - {@link #isolate} 为某个服务名生成全新标签并遮蔽父链查找：隔离分支中
  *   provide/get 走的都是这个新标签，于是和外界的同名服务互不可见
- *   （对应 ctx.isolate(name) + Service 的 [symbols.filter]）；
- * - {@link #intercept} 覆盖某个服务在本分支中的配置（对应 [symbols.intercept]）。
+ *   （对应 ctx.isolate(name) + Service 的 [symbols.filter]）。
+ *
+ * 未移植：[symbols.intercept] 在 TS 里用于“在本分支覆盖某服务的配置”，需要
+ * 服务侧配合读取分支配置，本范例没有服务消费它，故未移植——宁可缺席，也不
+ * 留一个看起来生效实际没人读的半成品 API。
  */
 public class Context {
     /** 父上下文（extend 链），根上下文为 null */
@@ -28,8 +31,6 @@ public class Context {
 
     /** 本层的隔离标签：服务名 -> 标签（对应 [symbols.isolate]） */
     private final Map<String, Object> isolate = new LinkedHashMap<>();
-    /** 本层的拦截配置：服务名 -> 配置（对应 [symbols.intercept]） */
-    private final Map<String, Object> intercept = new LinkedHashMap<>();
 
     /** 组件注册表（共享，对应 RegistryService 挂在根上下文上） */
     public final Registry registry;
@@ -75,7 +76,7 @@ public class Context {
 
     /**
      * 本上下文当前对应的 fiber（对应 ctx.fiber）。
-     * 与 TS 的原型链解析一致：裸派生上下文（extend/isolate/intercept 产生、
+     * 与 TS 的原型链解析一致：裸派生上下文（extend/isolate 产生、
      * 尚未在上面 use() 过插件）没有自己的 fiber，沿 parent 链解析到最近的
      * 祖先 fiber——效果、服务的 provisions 都归属祖先，最终篏底到根上下文
      * 自带的 fiber，因此正常情况下永不为 null。
@@ -91,7 +92,7 @@ public class Context {
         this.fiber = fiber;
     }
 
-    /** 对应 ctx.extend()：派生一个子上下文（isolate/intercept 走父链影子查找） */
+    /** 对应 ctx.extend()：派生一个子上下文（isolate 走父链影子查找） */
     public Context extend() {
         return new Context(this);
     }
@@ -103,19 +104,17 @@ public class Context {
         return child;
     }
 
-    /** 对应 ctx.intercept(name, config)：在本分支覆盖服务的配置 */
-    public Context intercept(String name, Object config) {
-        Context child = extend();
-        child.intercept.put(name, config);
-        return child;
-    }
-
     /**
      * 对应 ctx.events.on()：在共享的 EventsService 上注册监听器，
      * 但以“本上下文所在的 fiber”为 effect 宿主（对应 Proxy 绑定的 thisArg）。
      */
     public Disposable on(String name, EventListener listener) {
         return events.on(this, name, listener);
+    }
+
+    /** 对应 ctx.events.on(name, listener, prepend)：prepend=true 时优先派发 */
+    public Disposable on(String name, EventListener listener, boolean prepend) {
+        return events.on(this, name, listener, prepend);
     }
 
     /** 对应 ctx.events.once() */
@@ -153,7 +152,10 @@ public class Context {
         Fiber current = fiber();
         if (current != null) current.provisions.add(service);
         if (current == null || current.state == FiberState.ACTIVE) {
-            registry.onServiceChanged(name);
+            // 推迟一拍再广播：provide 通常在 Service 构造器里调用（见 Service 的
+            // 说明），此刻子类字段还没赋值。立即唤醒会让依赖者拿到半初始化的
+            // 服务实例；而注册类插件的依赖唤醒由 Fiber.reload→ACTIVE 统一负责。
+            scheduler.executeLater(() -> registry.onServiceChanged(name));
         }
     }
 
@@ -170,7 +172,9 @@ public class Context {
     /**
      * 服务解析，对应 ReflectService.get() / Proxy get：
      * 按本分支的隔离标签查全局仓库；提供者 fiber 必须处于 ACTIVE
-     * （对应 _getImpl 的 strict 检查）。
+     * （对应 _getImpl 的 strict 检查）；最后交给 {@link Service#applicable} 做
+     * 可见性校验（对应 [symbols.filter]），因此子类可以覆写它实现比“同隔离
+     * 视图”更细的可见性策略（如按租户 ID 过滤）。
      */
     @SuppressWarnings("unchecked")
     public <T extends Service> T get(String name) {
@@ -179,6 +183,7 @@ public class Context {
         Service s = root.serviceStore.get(key);
         if (s == null) return null;
         if (s.ctx.fiber().state != FiberState.ACTIVE) return null;
+        if (!s.applicable(this)) return null;
         return (T) s;
     }
 
@@ -190,14 +195,6 @@ public class Context {
     Object isolateLabel(String name) {
         for (Context c = this; c != null; c = c.parent) {
             if (c.isolate.containsKey(name)) return c.isolate.get(name);
-        }
-        return null;
-    }
-
-    /** 沿父链查找拦截配置，对应 [symbols.intercept] 的原型链查找 */
-    public Object interceptConfig(String name) {
-        for (Context c = this; c != null; c = c.parent) {
-            if (c.intercept.containsKey(name)) return c.intercept.get(name);
         }
         return null;
     }

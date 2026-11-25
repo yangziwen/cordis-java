@@ -21,7 +21,8 @@ import java.util.Map;
  */
 public class EventsService {
 
-    private final Map<String, List<Hook>> hooks = new LinkedHashMap<>();
+    /** 事件名 -> 监听器列表（头部优先 + 尾部追加，见 DisposableList 的 prepend 语义） */
+    private final Map<String, DisposableList<Hook>> hooks = new LinkedHashMap<>();
     private final Scheduler scheduler;
 
     public EventsService(Scheduler scheduler) {
@@ -39,6 +40,15 @@ public class EventsService {
      *   持有已关闭的连接/过期的服务引用。
      */
     public Disposable on(final Context caller, final String name, final EventListener listener) {
+        return on(caller, name, listener, false);
+    }
+
+    /**
+     * 对应 on(name, listener, prepend)：prepend=true 时插入列表头部，
+     * 派发时先于已注册的同名监听器执行（对应 TS 的 unshift 分支）。
+     */
+    public Disposable on(final Context caller, final String name, final EventListener listener,
+                        final boolean prepend) {
         final Hook[] holder = new Hook[1];
         final Disposable[] bound = new Disposable[1];
         final boolean[] removed = {false};
@@ -50,12 +60,12 @@ public class EventsService {
             if (owner != null && owner.acceptsEffects()) {
                 // 注册动作即 effect 本体：立即执行一次，返回的清理函数负责解绑
                 bound[0] = owner.effect(() -> {
-                    hooks.computeIfAbsent(name, k -> new ArrayList<Hook>()).add(hook);
+                    register(name, hook, prepend);
                     return () -> unregister(name, hook);
                 }, "events.on(" + name + ")");
             } else {
                 // 宿主 fiber 已失效（或不存在）：退化为无主监听器，仅由调用方手动解绑
-                hooks.computeIfAbsent(name, k -> new ArrayList<Hook>()).add(hook);
+                register(name, hook, prepend);
             }
         });
         return () -> scheduler.execute(() -> {
@@ -66,6 +76,13 @@ public class EventsService {
                 unregister(name, holder[0]);
             }
         });
+    }
+
+    /** 把 hook 加入指定事件的列表；仅主循环调用 */
+    private void register(String name, Hook hook, boolean prepend) {
+        DisposableList<Hook> list = hooks.computeIfAbsent(name, k -> new DisposableList<Hook>());
+        if (prepend) list.unshift(hook);
+        else list.push(hook);
     }
 
     /** 对应 once()：先移除自身，再执行监听器 */
@@ -80,7 +97,7 @@ public class EventsService {
 
     /** 对应 _resolve：取出监听器快照（已移除的不计入）；仅主循环调用 */
     private List<Hook> snapshot(String name) {
-        List<Hook> all = hooks.get(name);
+        DisposableList<Hook> all = hooks.get(name);
         List<Hook> result = new ArrayList<>();
         if (all == null) return result;
         for (Hook hook : all) {
@@ -105,12 +122,13 @@ public class EventsService {
                 try {
                     out = hook.callback.invoke(args);
                 } catch (RuntimeException e) {
-                    System.err.println("[cordis] listener error for \"" + name + "\": " + e);
+                    System.err.println("[cordis] listener error for \"" + name + "\" (" + describe(hook) + "): " + e);
                     continue;
                 }
                 if (out instanceof Promise) {
                     ((Promise<?>) out).catchError(e -> {
-                        System.err.println("[cordis] unhandled rejection in listener of \"" + name + "\": " + e);
+                        System.err.println("[cordis] unhandled rejection in listener of \"" + name
+                                + "\" (" + describe(hook) + "): " + e);
                         return null;
                     });
                 }
@@ -251,13 +269,19 @@ public class EventsService {
         return result.promise();
     }
 
+    /** 监听器归属描述（哪个 fiber 注册的），用于错误日志定位；仅主循环调用 */
+    private static String describe(Hook hook) {
+        Fiber owner = hook.owner.fiber();
+        return "registered by " + (owner == null ? "<unknown>" : owner.name);
+    }
+
     /** 对应 unregister()；仅主循环调用 */
     private void unregister(String name, Hook hook) {
         hook.removed = true;
-        List<Hook> list = hooks.get(name);
+        DisposableList<Hook> list = hooks.get(name);
         if (list != null) {
-            list.remove(hook);
-            if (list.isEmpty()) hooks.remove(name);
+            list.delete(hook);
+            if (list.size() == 0) hooks.remove(name);
         }
     }
 }

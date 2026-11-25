@@ -14,6 +14,10 @@ import java.util.Objects;
  * 注意：Java 要求 super() 必须是构造器的第一条语句，因此子类的字段在
  * super() 返回时尚未初始化。本范例的服务都很简单所以不受影响；移植真实
  * 逻辑时应避免在构造器中对外发布带状态的字段。
+ *
+ * 框架侧的护栏：{@code provide} 对"提供者已 ACTIVE"的场景不再同步广播，
+ * 而是推迟一拍（scheduler.executeLater），因此依赖者不会在同一个 tick 里
+ * 拿到字段尚未赋完值的实例。
  */
 public abstract class Service {
     /** 服务名，同时也是它在上下文中的访问键 */
@@ -28,8 +32,9 @@ public abstract class Service {
     }
 
     /**
-     * 对应 Service 的 [symbols.filter]：
-     * 只有与本服务处于同一 isolate 视图的上下文才能访问它。
+     * 对应 Service 的 [symbols.filter]：只有与本服务处于同一 isolate 视图的
+     * 上下文才能访问它。由 {@link Context#get} 在解析时调用，子类可覆写实现
+     * 更细的可见性策略（返回 false 即对该上下文不可见）。
      * 默认实现比较两端沿父链解析出的隔离标签。
      */
     public boolean applicable(Context other) {

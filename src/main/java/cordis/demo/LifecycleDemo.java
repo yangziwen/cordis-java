@@ -204,10 +204,6 @@ public class LifecycleDemo {
         System.out.println("root sees database      = " + root.has("database"));
         System.out.println("isolated sees database  = " + isolated.has("database"));
 
-        // 5e. intercept：在本分支覆盖服务的配置
-        System.out.println("intercept on root.branch = "
-                + root.intercept("database", "custom-config").interceptConfig("database"));
-
         // 6. 销毁数据库插件：依赖它的服务器插件被自动卸载
         System.out.println("\n-- dbFiber.dispose() --");
         dbFiber.dispose();

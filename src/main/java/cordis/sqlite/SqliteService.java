@@ -4,7 +4,6 @@ import cordis.core.Context;
 import cordis.core.Service;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -19,28 +18,22 @@ import java.util.Map;
  *
  * - 构造时通过 super(ctx, "sqlite") 自动注册（对应 Context.provide → provisions）；
  * - 持有 JDBC 连接，对外提供参数化的 execute / query / queryOne；
- * - close() 由插件返回的清理函数调用——fiber 卸载时连接随之关闭。
+ * - close() 由插件返回的清理函数调用——fiber 卸载时连接随之关闭
+ *   （插件把 close offload 到扩展池，不在主循环上做阻塞 IO）。
  */
 public class SqliteService extends Service {
 
     private final String url;
     private final Connection connection;
 
-    public SqliteService(Context ctx, String url) {
-        super(ctx, "sqlite");
-        this.url = url;
-        try {
-            this.connection = DriverManager.getConnection(url);
-        } catch (SQLException e) {
-            // 对应插件加载失败：异常会被 Fiber.reload 捕获，fiber 进入 FAILED
-            throw new IllegalStateException("cannot open sqlite connection: " + url, e);
-        }
-    }
-
     /**
      * 已有连接的构造：供异步插件使用“扩展池建连 → 主循环登记服务”的两段式
      * 初始化（见 SqlitePlugin.applyAsync）。注意 ctx.provide 在本构造中执行，
      * 必须发生在主循环线程上。
+     *
+     * 这里不再提供“构造器里自行 DriverManager.getConnection”的重载：那会在
+     * 调用方线程（可能是主循环）上做阻塞 IO，是一条人人可踩的陷阱路径。
+     * 建连请一律走 ctx.scheduler.offload。
      */
     public SqliteService(Context ctx, String url, Connection connection) {
         super(ctx, "sqlite");

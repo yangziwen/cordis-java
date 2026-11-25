@@ -59,7 +59,13 @@ public class SqlitePlugin implements Component {
                             + "  (on " + Thread.currentThread().getName() + ")");
                     return service;
                 }))
-                // 返回清理函数：fiber 卸载时由 teardown 调用
-                .then(service -> (Disposable) service::close);
+                // 返回清理函数：fiber 卸载时调用。
+                // close 是阻塞的 JDBC 操作，而 unload() 跑在主循环上——必须 offload
+                // 到扩展池，否则关闭连接会卡住整个调度器（违反“主循环只做微秒级
+                // 调度决策”的铁律）。事件监听器已在此之前解绑，不会再有并发查询。
+                .then(service -> (Disposable) () -> ctx.scheduler.offload(() -> {
+                    service.close();
+                    return null;
+                }));
     }
 }

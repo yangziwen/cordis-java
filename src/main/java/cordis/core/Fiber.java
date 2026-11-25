@@ -43,7 +43,8 @@ public class Fiber {
     /** 声明的依赖：服务名 -> 要求（对应 inject） */
     public final Map<String, Object> inject;
 
-    public FiberState state = FiberState.PENDING;
+    /** 当前生命周期状态（主循环写入；orchestration 线程也会读，故 volatile） */
+    public volatile FiberState state = FiberState.PENDING;
 
     /**
      * 本 fiber 的运行时登记信息（对应 runtime），根 fiber 为 null。
@@ -98,6 +99,11 @@ public class Fiber {
         this.runtime = runtime;
     }
 
+    /** 本 fiber 的运行时档案（根 fiber 为 null） */
+    Runtime runtime() {
+        return runtime;
+    }
+
     /**
      * 本 fiber 现在能否接受新的 effect：已销毁或已失效（epochActive=false）
      * 的 fiber 上不能再注册资源，否则资源会随 fiber 一起变成孤儿。
@@ -114,12 +120,23 @@ public class Fiber {
         this.registration = parent.fiber().effect(() -> {
             this.epochActive = true;
             this.refresh();
-            return () -> {
-                this.epochActive = false;
-                this.unload();
-                this.state = FiberState.DISPOSED;
-            };
+            return this::markDisposed;
         }, "registry.use(" + name + ")");
+    }
+
+    /**
+     * 收尾：撤销全部 effect 与服务，标记 DISPOSED，并回收运行时档案。
+     *
+     * 两条路径都汇到这里——显式 {@link #dispose()}，以及父 fiber 卸载时对本
+     * fiber 的级联清理（子 fiber 的生命周期本来就是父 fiber 的 effect）。
+     * 档案回收必须挂在“变 DISPOSED”这一点上：只写在 dispose() 里的话，级联
+     * 销毁的子 fiber 会永远留在 registry 里。
+     */
+    private void markDisposed() {
+        this.epochActive = false;
+        this.unload();
+        this.state = FiberState.DISPOSED;
+        ctx.registry.retire(this);
     }
 
     /**
@@ -221,8 +238,14 @@ public class Fiber {
      */
     private void reload() {
         state = FiberState.LOADING;
-        // 对应 this.inertia = this._reload()：登记在飞事务，await() 据此等待
-        this.inertia = component.applyAsync(ctx, config)
+        // 事务化：先把在飞事务登记进 inertia，再启动加载。
+        // 否则同步插件整条链会在赋值前就跑完，收尾的 handle 先把 inertia 置 null，
+        // 随后又被赋值回一个已结算的 Promise——inertia 永远非 null，“有事务在飞”
+        // 的判断从此失真。
+        final Deferred<Void> transaction = ctx.scheduler.defer();
+        final Promise<Void> inFlight = transaction.promise();
+        this.inertia = inFlight;
+        component.applyAsync(ctx, config)
                 .then(cleanup -> {
                     // 等待期间可能已被 dispose/依赖消失：丢弃迟到的结果
                     if (!epochActive || state != FiberState.LOADING) {
@@ -248,9 +271,12 @@ public class Fiber {
                     fail(e);
                     return null;
                 })
-                // 对应 TS _reload 收尾的 inertia = undefined：事务结束；
-                // await() 的等待者在下一次主循环判定时看到静止态
-                .handle((v, err) -> this.inertia = null);
+                // 对应 TS _reload 收尾的 inertia = undefined：
+                // 只清理属于自己的事务（期间可能已经是新一次 reload 的事务）
+                .handle((v, err) -> {
+                    if (this.inertia == inFlight) this.inertia = null;
+                    transaction.resolve((Void) null);
+                });
     }
 
     /**
@@ -313,12 +339,22 @@ public class Fiber {
     /**
      * 对应 fiber.dispose：把整个插件从父上下文上撤销。
      * 投递到主循环执行，保证与状态机串行。
+     *
+     * 根 fiber（runtime == null）不可销毁；挂载从未成功的 fiber（register 抛过
+     * 异常，registration 仍为 null）也要能正常收尾，否则它会永远占着档案。
      */
     public void dispose() {
         ctx.scheduler.execute(() -> {
-            if (registration == null) return; // 根 fiber 不可销毁
-            registration.dispose();
-            if (runtime != null) runtime.fibers.remove(this);
+            if (runtime == null) return;                 // 根 fiber 不可销毁
+            if (state != FiberState.DISPOSED) {
+                if (registration != null) {
+                    registration.dispose();              // 走父 fiber 的 effect 清理 → markDisposed
+                } else {
+                    // 挂载从未成功（register 抛过异常）：直接收尾，否则它会永远占着档案
+                    markDisposed();
+                }
+            }
+            ctx.registry.retire(this);                   // 幂等兜底
         });
     }
 

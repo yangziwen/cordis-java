@@ -21,15 +21,9 @@ public class Registry {
     private final Context ctx;
     /** 组件 -> 运行时档案（对应 _internal：Map&lt;Function, Component.Runtime&gt;） */
     private final Map<Component, Runtime> internal = new LinkedHashMap<>();
-    private int counter = 0;
 
     Registry(Context ctx) {
         this.ctx = ctx;
-    }
-
-    /** 递增的实例编号（对应 registry.counter） */
-    public int counter() {
-        return ++counter;
     }
 
     public int size() {
@@ -42,7 +36,7 @@ public class Registry {
      *
      * caller 决定两件事：
      * 1. fiber 的专属上下文是 caller 的子节点，因此 caller 分支上的
-     *    isolate/intercept 标签都会被继承（多租户隔离的关键）；
+     *    isolate 标签都会被继承（多租户隔离的关键）；
      * 2. 插件的整个生命周期注册为 caller 沿父链解析出的 fiber 的 effect。
      *
      * 线程模型：use() 可以在任意线程调用（同步返回 PENDING 状态的 fiber），
@@ -97,13 +91,31 @@ public class Registry {
 
     /**
      * 服务出现/消失时唤醒等待它的 fiber（对应 internal/service 事件，
-     * 以及 Service 构造时触发的 reflect.notify）。
+     * 以及 Service 构造时触发的 reflect.notify）。仅主循环调用。
+     *
+     * 必须遍历快照：被唤醒的 fiber 可能因依赖消失而卸载、进而级联销毁其它
+     * fiber，{@link #retire(Fiber)} 会从 internal 中摘除条目——直接遍历
+     * internal.values() 会 ConcurrentModificationException。
      */
     void onServiceChanged(String name) {
-        for (Runtime runtime : internal.values()) {
+        for (Runtime runtime : new ArrayList<>(internal.values())) {
             for (Fiber fiber : new ArrayList<>(runtime.fibers)) {
                 if (fiber.inject.containsKey(name)) fiber.onDependenciesChanged();
             }
+        }
+    }
+
+    /**
+     * fiber 销毁后回收档案：最后一个 fiber 消失时把整份 Runtime 一并注销，
+     * 对应 Runtime 注释描述的行为（否则 internal 会随 use/dispose 循环无限增长，
+     * 且强引用住 Component 与配置）。仅主循环调用。
+     */
+    void retire(Fiber fiber) {
+        Runtime runtime = fiber.runtime();
+        if (runtime == null) return;                       // 根 fiber 不在档案里
+        runtime.fibers.remove(fiber);
+        if (runtime.fibers.isEmpty()) {
+            internal.remove(runtime.callback, runtime);     // 双参数移除，避免误删重建后的新档案
         }
     }
 }

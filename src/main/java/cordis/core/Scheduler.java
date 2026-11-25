@@ -6,7 +6,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * cordis 的调度中枢，对应“JS 主线程 + libuv 线程池”的双层结构：
@@ -25,7 +24,15 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class Scheduler {
 
     private final ScheduledThreadPoolExecutor mainLoop;
-    private final AtomicReference<Thread> mainThread = new AtomicReference<>();
+    /**
+     * “当前线程是不是主循环线程”的标记。
+     * 不能用 Thread 引用做判定：主循环线程一旦因异常被线程池替换，旧引用就永远
+     * 失效（inMainLoop 永假 → awaitIdle 的自死锁保护、effect 断言全部失灵）。
+     * ThreadLocal 随线程出生/消亡自动失效，替换后新线程会在首个任务里重新打标。
+     */
+    private final ThreadLocal<Boolean> onMainLoop = new ThreadLocal<>();
+    /** 仅供诊断/日志展示的当前主循环线程（线程被替换时自动刷新） */
+    private volatile Thread mainThread;
     private final ExecutorService blockingPool;
 
     public Scheduler() {
@@ -36,7 +43,6 @@ public final class Scheduler {
         mainLoop = new ScheduledThreadPoolExecutor(1, r -> {
             Thread t = new Thread(r, "cordis-main-loop");
             t.setDaemon(true);
-            mainThread.compareAndSet(null, t);
             return t;
         });
         blockingPool = Executors.newFixedThreadPool(blockingPoolSize, r -> {
@@ -59,13 +65,33 @@ public final class Scheduler {
         if (inMainLoop()) {
             runSafely(task);
         } else {
-            try {
-                mainLoop.execute(() -> runSafely(task));
-            } catch (RejectedExecutionException e) {
-                // 调度器已停机：丢弃尾声任务（停机后不再受理新回调，
-                // 与 Netty 停机后拒绝写入的行为一致）
-            }
+            enqueue(task);
         }
+    }
+
+    /**
+     * 把任务排到“当前 tick 之后”执行，即使调用方就在主循环上也不内联。
+     * 用于需要与调用栈脱钩的通知（如 provide 之后的服务变更广播：必须等
+     * Service 子类构造器跑完，消费者才不至于拿到半初始化的实例）。
+     */
+    public void executeLater(final Runnable task) {
+        enqueue(task);
+    }
+
+    private void enqueue(final Runnable task) {
+        try {
+            mainLoop.execute(() -> runOnLoop(task));
+        } catch (RejectedExecutionException e) {
+            // 调度器已停机：丢弃尾声任务（停机后不再受理新回调，
+            // 与 Netty 停机后拒绝写入的行为一致）
+        }
+    }
+
+    /** 主循环线程的任务入口：打标 + 异常兜底 */
+    private void runOnLoop(Runnable task) {
+        onMainLoop.set(Boolean.TRUE);
+        mainThread = Thread.currentThread();   // 线程池替换线程时自动刷新
+        runSafely(task);
     }
 
     /** 主循环任务的统一异常出口（对应 TS 侧未捕获异常的 logger.error） */
@@ -76,10 +102,6 @@ public final class Scheduler {
             System.err.println("[cordis] main-loop task failed: " + t);
             t.printStackTrace();
         }
-    }
-
-    public boolean isInMainLoop() {
-        return inMainLoop();
     }
 
     /**
@@ -101,13 +123,18 @@ public final class Scheduler {
      */
     public <T> Promise<T> offload(final Callable<T> task) {
         final Deferred<T> deferred = defer();
-        blockingPool.execute(() -> {
-            try {
-                deferred.resolve(task.call());
-            } catch (Throwable t) {
-                deferred.reject(t);
-            }
-        });
+        try {
+            blockingPool.execute(() -> {
+                try {
+                    deferred.resolve(task.call());
+                } catch (Throwable t) {
+                    deferred.reject(t);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // 扩展池已停机：把失败交给 Promise，而不是抛给可能正在收尾的调用方
+            deferred.reject(new IllegalStateException("scheduler has been shut down", e));
+        }
         return deferred.promise();
     }
 
@@ -128,7 +155,10 @@ public final class Scheduler {
     public void awaitIdle() {
         if (inMainLoop()) return;   // 自己等自己 = 死锁，直接跳过
         try {
-            mainLoop.submit(() -> { }).get();
+            mainLoop.submit(() -> {
+                onMainLoop.set(Boolean.TRUE);        // 屏障任务同样打标，保持线程判定一致
+                mainThread = Thread.currentThread();
+            }).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException e) {
@@ -142,6 +172,11 @@ public final class Scheduler {
     }
 
     boolean inMainLoop() {
-        return Thread.currentThread() == mainThread.get();
+        return Boolean.TRUE.equals(onMainLoop.get());
+    }
+
+    /** 当前主循环线程（仅诊断用；线程被替换后自动指向新线程） */
+    public Thread mainLoopThread() {
+        return mainThread;
     }
 }

@@ -4,9 +4,12 @@ package cordis.core;
  * 对应 packages/core/src/events.ts 的 Hook：
  * 一个带注册方上下文的监听器条目。
  *
- * 除了 callback 本身，还记录了注册时的上下文（对应 hook.ctx）——TS 版本
- * 在派发时用它做 isolate 过滤；本范例的过滤已由 Service.applicable()
- * 承载，故 owner 仅保留备查。
+ * 除了 callback 本身，还记录了注册时的上下文（对应 hook.ctx）——仅用于
+ * 调试/日志（谁注册的），不参与派发过滤：与 TS 一致，isolate 只作用于
+ * 服务解析（见 Service.applicable），事件是全树广播的。
+ *
+ * 解绑由注册方 fiber 的 effect 负责（EventsService.on 把注册/解绑整体注册
+ * 成 caller.fiber() 的 effect），因此这里不需要额外的 owner 校验。
  *
  * removed 标记对应 TS 的 hook.removed，用于派发时过滤已注销的监听器。
  *
