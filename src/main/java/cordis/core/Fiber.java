@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 对应 packages/core/src/fiber.ts（异步化版本）。
  *
@@ -30,6 +33,8 @@ import java.util.function.Supplier;
  *   编排层用它等待当前生命周期事务结算
  */
 public class Fiber {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Fiber.class);
 
     /** 本 fiber 对应的上下文（一个 extend 出来的子上下文，对应 this.ctx） */
     public final Context ctx;
@@ -345,8 +350,9 @@ public class Fiber {
             try {
                 all.get(i).dispose();
             } catch (RuntimeException e) {
-                // 对应 _unload 中被 logger.error 吞掉的清理异常
-                System.err.println("[cordis] error while unloading \"" + name + "\": " + e);
+                // 对应 _unload 中被 logger.error 吞掉的清理异常：卸载必须走完，
+                // 不能因为某个 effect 抛错就把剩下的资源漏掉
+                LOG.error("error while unloading \"{}\"", name, e);
             }
         }
     }
@@ -369,7 +375,7 @@ public class Fiber {
         }
         error = e;
         state = FiberState.FAILED;
-        System.err.println("[cordis] fiber \"" + name + "\" failed: " + e);
+        LOG.error("fiber \"{}\" failed", name, e);
     }
 
     /** 服务出现/消失时由 Registry 回调（对应 internal/service 事件触发的刷新） */

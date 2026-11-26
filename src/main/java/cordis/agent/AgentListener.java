@@ -1,5 +1,8 @@
 package cordis.agent;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 一次 run 的私有观察者：事件直接回调给调用方，不走全局 {@code ctx.events}。
  *
@@ -27,6 +30,9 @@ package cordis.agent;
  * <p>所有方法都是 default，按需覆盖即可。{@link #NONE} 是"不观察"的常量。
  */
 public interface AgentListener {
+
+    /** 观察者自身的诊断日志（回调失败与对话无关，但必须留痕） */
+    Logger LOG = LoggerFactory.getLogger(AgentListener.class);
 
     /** 不观察任何事件（{@code run(history, input)} 的默认行为） */
     AgentListener NONE = new AgentListener() {
@@ -57,9 +63,9 @@ public interface AgentListener {
     default void onReply(String content) {
     }
 
-    /** 回调失败统一降级为 stderr：观察者不该影响对话 */
+    /** 回调失败统一降级为 WARN：观察者不该影响对话 */
     static void guard(String hook, Throwable error) {
-        System.err.println("[agent] listener." + hook + " threw: " + error);
+        LOG.warn("listener.{} threw", hook, error);
     }
 
 }

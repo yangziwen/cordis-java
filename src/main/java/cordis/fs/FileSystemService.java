@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Context;
 import cordis.core.Promise;
 import cordis.core.Service;
@@ -61,6 +64,8 @@ import cordis.core.Service;
  * toolPool 上）。在<b>主循环</b>上调 {@code *Sync} 会 fail-fast。
  */
 public class FileSystemService extends Service {
+
+    private static final Logger LOG = LoggerFactory.getLogger(FileSystemService.class);
 
     /** 单次读取的行数上限：护的是模型上下文，不是内存 */
     private static final int MAX_READ_LINES = 2000;
@@ -379,7 +384,8 @@ public class FileSystemService extends Service {
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
-            System.err.println("[fs] cleanup of temp file failed: " + file);
+            // 临时文件清理失败不影响结果（目标文件已经落盘），只有调试时需要知道
+            LOG.debug("cleanup of temp file failed: {}", file, e);
         }
     }
 

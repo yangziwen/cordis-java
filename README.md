@@ -4,7 +4,7 @@
 
 - 语言的差别被如实承认：TS 用 Proxy 隐式解析服务，这里改成显式 `ctx.get(name)`；TS 用 `Promise` 表达一切，这里造了一个绑定主循环的 `Promise`/`Deferred`。
 - 目标不是「语法翻译」，而是把 cordis 的**调度模型与生命周期语义**原样搬过来：主循环串行决策、阻塞工作 offload、依赖驱动挂载、effect 逆序回收、热插拔。
-- 规模：107 个 Java 文件、约 1.5 万行，**运行时无框架依赖**（只有 4 个第三方库，见 [依赖](#依赖与版本选择)）。
+- 规模：107 个 Java 文件、约 1.5 万行，**运行时无框架依赖**（只有 6 个第三方库，见 [依赖](#依赖与版本选择)）。
 
 ---
 
@@ -20,6 +20,7 @@
 - [适配层与工具清单](#适配层与工具清单)
 - [应用：AgentServer / AgentCli](#应用agentserver--agentcli)
 - [线程模型与编码约定](#线程模型与编码约定)
+- [日志](#日志)
 - [安全模型](#安全模型)
 - [验证与回归](#验证与回归)
 - [已知限制](#已知限制)
@@ -509,6 +510,39 @@ java -cp "$CP" cordis.app.AgentCli [url] [--no-stream] [--session id]
 
 ---
 
+## 日志
+
+分界只有一条：**程序的产物走命令行，运行期事件走 slf4j**。
+
+| 输出者 | 通道 | 理由 |
+|---|---|---|
+| `cordis.demo.*` 的断言与演示 | `System.out` / `System.err` | 格式即契约：`java -cp ... Demo && echo ok`，`[PASS]`/`[FAIL]` 被脚本 grep |
+| `AgentCli` | `System.out` | 它本身就是交互式 UI |
+| `AgentServer` 的 `--help`、启动 banner | `System.out` | 一次性、人读、面向控制台 |
+| `AgentServer` 参数错误 / 启动失败 | `System.err` + 非 0 退出码 | 让 `./server --bad` 在 shell 里失败 |
+| 框架运行期（`core` / 能力层 / `agent` / `app` 请求处理） | slf4j | 目标、级别、格式应由装配方决定，库无权写死 stdout |
+
+框架代码只依赖 `slf4j-api`（编译期），`slf4j-simple` 只是 `runtime` 便利 binding；换 logback / log4j2 / jul 只需替换它，业务代码零改动。
+
+`slf4j-simple` 默认 INFO 且不带时间戳，生产建议：
+
+```bash
+java -Dorg.slf4j.simpleLogger.showDateTime=true \
+     -Dorg.slf4j.simpleLogger.dateTimeFormat='yyyy-MM-dd HH:mm:ss.SSS' \
+     -cp "$CP" cordis.app.AgentServer
+```
+
+级别约定：
+
+| 级别 | 用在 |
+|---|---|
+| ERROR | 框架内部不可恢复：主循环任务抛出、fiber 挂载/卸载失败、`handle` 之外必须留痕的异常 |
+| WARN | 降级但继续：监听器抛错、事务回滚/复原失败、HTTP 500、浏览器预热失败 |
+| INFO | 一次性生命周期事实：workspace 就绪、技能数、driver 启动与耗时、浏览器预热完成 |
+| DEBUG | 高频或纯诊断：连接建立、临时文件清理失败、driver 关闭 |
+
+---
+
 ## 安全模型
 
 默认值一律是「关」，需要显式打开：
@@ -598,5 +632,7 @@ src/main/java/cordis/
 | `okhttp` | 3.14.9 | 4.x 起用 Kotlin 编写，会连带引入 `kotlin-stdlib`；本项目只需要 `enqueue` 异步回调 |
 | `jackson-databind` | 2.17.2 | 只给 wire 层（OpenAI 兼容协议）用；2.17 是 Java 8 基线，3.x 要 JDK 17 |
 | `playwright` | 1.65.1 | 官方主 pom 仍是 source/target 8；1.64+ 提供 `ariaSnapshot(AI)` 与 `getByRef` |
+| `slf4j-api` | 2.0.17 | 日志门面，2.x 基线 Java 8；框架只依赖 API，不绑定实现 |
+| `slf4j-simple` | 2.0.17 | `runtime` scope 的便利 binding（打 stderr），供 demo 与 AgentServer 直接运行；作为库引入时应换成自己的实现 |
 
-内核本身零第三方依赖：`cordis.core` 只用 JDK 的 `java.util.concurrent` 与函数式接口。
+内核除了 `slf4j-api` 不依赖任何第三方库：`cordis.core` 其余只用 JDK 的 `java.util.concurrent` 与函数式接口。

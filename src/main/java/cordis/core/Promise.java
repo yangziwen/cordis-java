@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * cordis-java 的一等公民 Promise（对应 TS 的 Promise / jQuery 的 deferred.promise）。
  *
@@ -23,6 +26,8 @@ import java.util.function.Function;
  * 仅供编排层与测试使用，框架内部从不调用。
  */
 public class Promise<T> {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Promise.class);
 
     public enum State { PENDING, FULFILLED, REJECTED }
 
@@ -180,7 +185,8 @@ public class Promise<T> {
             try {
                 consumer.accept(value, error);
             } catch (Throwable t) {
-                System.err.println("[cordis] promise handle callback failed: " + t);
+                // 旁路观察失败不得影响主链结果，故只记录
+                LOG.warn("promise handle callback failed", t);
             }
             if (state == State.REJECTED) {
                 next.reject(error);

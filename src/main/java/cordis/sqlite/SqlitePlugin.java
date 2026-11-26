@@ -4,6 +4,9 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
@@ -30,6 +33,8 @@ import cordis.core.Promise;
  */
 public class SqlitePlugin implements Component {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SqlitePlugin.class);
+
     public static final SqlitePlugin INSTANCE = new SqlitePlugin();
 
     private SqlitePlugin() {
@@ -55,8 +60,7 @@ public class SqlitePlugin implements Component {
                 // ping 自检也是阻塞 JDBC → offload；失败则 fiber 进入 FAILED
                 .thenAsync(service -> ctx.scheduler.offload(() -> {
                     service.ping();
-                    System.out.println("[sqlite] connection opened: " + url
-                            + "  (on " + Thread.currentThread().getName() + ")");
+                    LOG.debug("connection opened: {}", url);
                     return service;
                 }))
                 // 返回清理函数：fiber 卸载时调用。

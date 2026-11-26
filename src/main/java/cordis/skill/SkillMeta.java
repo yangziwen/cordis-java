@@ -6,6 +6,9 @@ import java.nio.file.Path;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 技能元数据：技能目录下的 {@code skill.json}（包私有）。
  *
@@ -27,6 +30,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 结构化文本，直接复用项目已有的 Jackson，不新增依赖，也不手写 JSON 解析器。
  */
 final class SkillMeta {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SkillMeta.class);
 
     /** 元数据文件名（与 SKILL.md 并列在技能目录里） */
     static final String FILE = "skill.json";
@@ -74,8 +79,8 @@ final class SkillMeta {
         if (flat.length() > 120) {
             flat = flat.substring(0, 120) + "…";
         }
-        System.err.println("[skills] ignoring malformed " + FILE + " at " + file
-                + " (" + flat + "); falling back to the first line of SKILL.md");
+        LOG.warn("ignoring malformed {} at {} ({}); falling back to the first line of SKILL.md",
+                FILE, file, flat);
     }
 
 }

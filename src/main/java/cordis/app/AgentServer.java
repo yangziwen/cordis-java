@@ -24,6 +24,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.agent.AgentListener;
 import cordis.agent.AgentPlugin;
 import cordis.agent.AgentResult;
@@ -124,6 +127,12 @@ import cordis.util.Maps;
  * 回归与自测见 {@code cordis.demo.AgentServerDemo}。
  */
 public final class AgentServer implements AutoCloseable {
+
+    /**
+     * 运行期日志（请求级失败、会话级异常）。启动 banner 仍走 stdout：
+     * 那是 main 面向控制台的一次性输出，不是运行期事件。
+     */
+    private static final Logger LOG = LoggerFactory.getLogger(AgentServer.class);
 
     public static final int DEFAULT_PORT = 8787;
 
@@ -337,6 +346,7 @@ public final class AgentServer implements AutoCloseable {
             }
             write(exchange, 200, JSON.writeValueAsBytes(body));
         } catch (Exception e) {
+            LOG.warn("health failed", e);
             writeError(exchange, 500, messageOf(e));
         }
     }
@@ -346,6 +356,7 @@ public final class AgentServer implements AutoCloseable {
             writeError(exchange, 405, "use POST");
             return;
         }
+        String session = "-";
         try {
             JsonNode request = JSON.readTree(readBody(exchange));
             String message = text(request, "message");
@@ -353,7 +364,7 @@ public final class AgentServer implements AutoCloseable {
                 writeError(exchange, 400, "missing \"message\"");
                 return;
             }
-            String session = text(request, "session");
+            session = text(request, "session");
             if (session.isEmpty()) {
                 session = UUID.randomUUID().toString().substring(0, 8);
             }
@@ -371,6 +382,8 @@ public final class AgentServer implements AutoCloseable {
                 chatOnce(exchange, history, message, session);
             }
         } catch (Exception e) {
+            // 客户端只能拿到 500，服务端必须留痕（带 session，否则多会话时分不清）
+            LOG.warn("chat failed, session={}", session, e);
             writeError(exchange, 500, messageOf(e));
         }
     }
@@ -389,6 +402,7 @@ public final class AgentServer implements AutoCloseable {
             body.put("cleared", cleared);
             write(exchange, 200, JSON.writeValueAsBytes(body));
         } catch (Exception e) {
+            LOG.warn("reset failed", e);
             writeError(exchange, 500, messageOf(e));
         }
     }
@@ -464,6 +478,7 @@ public final class AgentServer implements AutoCloseable {
             finalEvent.put("elapsedMs", System.currentTimeMillis() - start);
             sseWrite(out, writeLock, finalEvent);
         } catch (Exception e) {
+            LOG.warn("chat stream failed, session={}", session, e);
             Map<String, Object> error = event("error");
             error.put("message", messageOf(e));
             sseWrite(out, writeLock, error);

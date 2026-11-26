@@ -19,6 +19,9 @@ import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.options.AriaSnapshotMode;
 import com.microsoft.playwright.options.WaitUntilState;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Context;
 import cordis.core.Promise;
 import cordis.core.Service;
@@ -59,6 +62,8 @@ import cordis.http.HttpAccessPolicy;
  * </ul>
  */
 public class BrowserService extends Service {
+
+    private static final Logger LOG = LoggerFactory.getLogger(BrowserService.class);
 
     public static final int DEFAULT_MAX_PAGES = 8;
 
@@ -371,7 +376,7 @@ public class BrowserService extends Service {
             long begin = System.currentTimeMillis();
             if (playwright == null) {
                 // 首次 9s（解压 driver bundle），之后走 OS 文件缓存约 0.4s
-                System.out.println("[browser] starting driver (node subprocess)");
+                LOG.info("starting driver (node subprocess)");
                 Playwright.CreateOptions createOptions = createOptions();
                 playwright = createOptions == null
                         ? Playwright.create()
@@ -384,10 +389,10 @@ public class BrowserService extends Service {
             }
             browser = playwright.chromium().launch(options);
             long launched = System.currentTimeMillis();
-            // 启动是低频事件（一次进程一次），把 9s+4s 拆开打出来，卡住时能定位
-            System.out.println("[browser] driver ready in " + (driverReady - begin)
-                    + "ms, browser up in " + (launched - driverReady) + "ms ("
-                    + (channel.isEmpty() ? "bundled" : channel) + ", headless=" + headless + ")");
+            // 启动是低频事件（一次进程一次），9s+4s 拆成两个字段，卡住时能直接定位
+            LOG.info("browser up: driver={}ms launch={}ms channel={} headless={}",
+                    driverReady - begin, launched - driverReady,
+                    channel.isEmpty() ? "bundled" : channel, headless);
             return browser;
         }
     }

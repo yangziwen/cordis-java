@@ -8,6 +8,9 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * cordis 的调度中枢，对应“JS 主线程 + libuv 线程池”的双层结构：
  *
@@ -23,6 +26,8 @@ import java.util.concurrent.TimeUnit;
  * {@link #offload} 到扩展池。这与 Netty 的“不要阻塞 EventLoop”完全同义。
  */
 public final class Scheduler {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Scheduler.class);
 
     private final ScheduledThreadPoolExecutor mainLoop;
 
@@ -103,8 +108,8 @@ public final class Scheduler {
         try {
             task.run();
         } catch (Throwable t) {
-            System.err.println("[cordis] main-loop task failed: " + t);
-            t.printStackTrace();
+            // 只记录不重抛：抛出去会杀掉唯一的调度线程，整个框架就此瘫痪
+            LOG.error("main-loop task failed", t);
         }
     }
 

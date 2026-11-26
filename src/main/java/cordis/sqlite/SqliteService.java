@@ -13,6 +13,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * SQLite 服务：一个真实的 Service 子类用例。
  *
@@ -22,6 +25,8 @@ import java.util.Map;
  *   （插件把 close offload 到扩展池，不在主循环上做阻塞 IO）。
  */
 public class SqliteService extends Service {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SqliteService.class);
 
     private final String url;
 
@@ -124,7 +129,7 @@ public class SqliteService extends Service {
             try {
                 connection.setAutoCommit(autoCommit);
             } catch (SQLException e) {
-                System.err.println("[sqlite] restore auto-commit failed: " + e);
+                LOG.warn("restore auto-commit failed", e);
             }
         }
     }
@@ -133,7 +138,7 @@ public class SqliteService extends Service {
         try {
             connection.rollback();
         } catch (SQLException e) {
-            System.err.println("[sqlite] rollback failed: " + e);
+            LOG.warn("rollback failed", e);
         }
     }
 
@@ -142,7 +147,7 @@ public class SqliteService extends Service {
         try {
             connection.close();
         } catch (SQLException e) {
-            System.err.println("[sqlite] error while closing: " + e);
+            LOG.warn("error while closing", e);
         }
     }
 

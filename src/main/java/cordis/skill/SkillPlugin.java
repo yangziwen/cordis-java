@@ -10,6 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
@@ -56,6 +59,8 @@ import cordis.core.Promise;
  */
 public class SkillPlugin implements Component {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SkillPlugin.class);
+
     /** 默认清单描述截断：200 字符 */
     public static final int DEFAULT_MAX_DESCRIPTION_CHARS = 200;
 
@@ -100,8 +105,7 @@ public class SkillPlugin implements Component {
 
         return ctx.scheduler.<List<Skill>>offload(() -> {
                     List<Skill> skills = scan(root, createRoot, maxSkills);
-                    System.out.println("[skills] " + skills.size() + " skill(s) ready from "
-                            + root + "  (on " + Thread.currentThread().getName() + ")");
+                    LOG.info("{} skill(s) ready from {}", skills.size(), root);
                     return skills;
                 })
                 .then(skills -> new SkillService(ctx, skills, maxDescriptionChars, maxLoadBytes))
@@ -118,8 +122,8 @@ public class SkillPlugin implements Component {
             if (createRoot) {
                 Files.createDirectories(root);
             } else {
-                System.err.println("[skills] skill root does not exist (empty catalog): "
-                        + root);
+                // 空目录是合法配置（比如还没放技能），只说一声，不算异常
+                LOG.info("skill root does not exist (empty catalog): {}", root);
                 return new ArrayList<Skill>();
             }
         }
@@ -143,8 +147,7 @@ public class SkillPlugin implements Component {
                 continue;                                    // 陪跑目录（references 等）
             }
             if (skills.size() >= maxSkills) {
-                System.err.println("[skills] skill count exceeds maxSkills=" + maxSkills
-                        + ", ignoring the rest");
+                LOG.warn("skill count exceeds maxSkills={}, ignoring the rest", maxSkills);
                 break;
             }
             skills.add(load(dir.getFileName().toString(), dir));

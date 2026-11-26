@@ -5,6 +5,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
@@ -31,6 +34,8 @@ import cordis.core.Promise;
  * </ul>
  */
 public class FileSystemPlugin implements Component {
+
+    private static final Logger LOG = LoggerFactory.getLogger(FileSystemPlugin.class);
 
     /** 默认单文件读取上限：2MB */
     public static final long DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -77,8 +82,7 @@ public class FileSystemPlugin implements Component {
                 throw new IllegalStateException("workspace root is not a directory: " + raw);
             }
             Path realRoot = raw.toRealPath();
-            System.out.println("[filesystem] workspace ready: " + realRoot
-                    + "  (on " + Thread.currentThread().getName() + ")");
+            LOG.info("workspace ready: {}", realRoot);
             return realRoot;
         }).then(realRoot -> new FileSystemService(ctx, realRoot,
                 maxReadBytes, maxWriteBytes, approval)

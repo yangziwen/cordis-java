@@ -19,6 +19,25 @@
     </properties>
 
     <dependencies>
+        <!--
+            日志门面：框架代码只依赖 API，输出目标由装配方决定（换 logback /
+            log4j2 只需替换 runtime 依赖）。slf4j 2.x 基线是 Java 8。
+            下面 slf4j-simple 只是可执行的 Convenience binding：它把日志打到
+            stderr，供 demo 与 AgentServer 直接运行；当你把本项目当库嵌入时，
+            换成自己的 binding（logback / log4j2 / jul）即可，业务代码无需改动。
+        -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.17</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- SQLite JDBC 驱动 -->
         <dependency>
             <groupId>org.xerial</groupId>

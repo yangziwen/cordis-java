@@ -5,6 +5,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 对应 packages/core/src/events.ts（异步化版本）。
  *
@@ -20,6 +23,8 @@ import java.util.Map;
  * 监听器内部若需阻塞，必须返回 scheduler.offload(...) 产出的 Promise。
  */
 public class EventsService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(EventsService.class);
 
     /** 事件名 -> 监听器列表（头部优先 + 尾部追加，见 DisposableList 的 prepend 语义） */
     private final Map<String, DisposableList<Hook>> hooks = new LinkedHashMap<>();
@@ -132,13 +137,13 @@ public class EventsService {
                 try {
                     out = hook.callback.invoke(args);
                 } catch (RuntimeException e) {
-                    System.err.println("[cordis] listener error for \"" + name + "\" (" + describe(hook) + "): " + e);
+                    LOG.error("listener error for \"{}\" ({})", name, describe(hook), e);
                     continue;
                 }
                 if (out instanceof Promise) {
                     ((Promise<?>) out).catchError(e -> {
-                        System.err.println("[cordis] unhandled rejection in listener of \"" + name
-                                + "\" (" + describe(hook) + "): " + e);
+                        LOG.error("unhandled rejection in listener of \"{}\" ({})",
+                                name, describe(hook), e);
                         return null;
                     });
                 }

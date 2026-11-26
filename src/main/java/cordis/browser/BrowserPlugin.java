@@ -4,6 +4,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import cordis.core.Component;
 import cordis.core.Context;
 import cordis.core.Disposable;
@@ -34,6 +37,8 @@ import cordis.http.HttpAccessPolicy;
  * server 起不来。
  */
 public class BrowserPlugin implements Component {
+
+    private static final Logger LOG = LoggerFactory.getLogger(BrowserPlugin.class);
 
     public static final BrowserPlugin INSTANCE = new BrowserPlugin();
 
@@ -77,21 +82,19 @@ public class BrowserPlugin implements Component {
             }
             try {
                 service.prewarmSync();
-                System.out.println("[browser] prewarmed: " + service);
+                LOG.info("prewarmed: {}", service);
             } catch (Throwable t) {
                 if (!service.isClosed()) {
-                    System.out.println("[browser] prewarm failed (tools will retry on demand): "
-                            + t.getMessage());
+                    LOG.warn("prewarm failed (tools will retry on demand): {}", t.getMessage());
                 }
             }
             return Boolean.TRUE;
         });
 
         return () -> {
-            System.out.println("[browser] closing driver");
             ctx.scheduler.<Boolean>offload(() -> {
                 service.shutdownSync();
-                System.out.println("[browser] driver closed");
+                LOG.debug("driver closed");
                 return Boolean.TRUE;
             });
         };
