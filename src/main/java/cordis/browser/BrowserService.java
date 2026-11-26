@@ -310,7 +310,17 @@ public class BrowserService extends Service {
     /** 提前把 driver + 浏览器拉起来，避免首个工具调用等 13s */
     public void prewarmSync() {
         assertNotMainLoop("BrowserService.prewarmSync");
+        if (isClosed()) {
+            return;
+        }
         browser();
+    }
+
+    /** 已卸载：预热与工具调用据此早退，不把 driver 拉到一半再被打断 */
+    public boolean isClosed() {
+        synchronized (startLock) {
+            return closed;
+        }
     }
 
     public boolean isStarted() {

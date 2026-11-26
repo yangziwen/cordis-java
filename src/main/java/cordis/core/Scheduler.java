@@ -6,6 +6,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * cordis 的调度中枢，对应“JS 主线程 + libuv 线程池”的双层结构：
@@ -171,9 +172,29 @@ public final class Scheduler {
         }
     }
 
+    /**
+     * 关闭调度器：先让已入队的收尾任务跑完（扩展池最多 5s、主循环 1s），
+     * 再强制中断。
+     *
+     * <p>为什么不是直接 {@code shutdownNow()}：插件卸载会把「关浏览器 / 关连接池」
+     * 这类收尾动作 {@code offload} 出去，立刻中断它就等于在最脆弱的一步把连接
+     * 掐断——Playwright 的 driver 会留下脏 node 进程并往控制台喷栈。
+     */
     public void shutdown() {
-        mainLoop.shutdownNow();
-        blockingPool.shutdownNow();
+        mainLoop.shutdown();
+        blockingPool.shutdown();
+        try {
+            if (!blockingPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                blockingPool.shutdownNow();
+            }
+            if (!mainLoop.awaitTermination(1, TimeUnit.SECONDS)) {
+                mainLoop.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            blockingPool.shutdownNow();
+            mainLoop.shutdownNow();
+        }
     }
 
     boolean inMainLoop() {

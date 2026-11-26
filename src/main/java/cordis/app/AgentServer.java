@@ -34,10 +34,13 @@ import cordis.agent.SystemProvider;
 import cordis.agent.Tool;
 import cordis.agent.ToolComponent;
 import cordis.agent.ToolService;
+import cordis.agent.browser.BrowserTools;
 import cordis.agent.fs.FileSystemTools;
 import cordis.agent.http.HttpTools;
 import cordis.agent.llm.OpenAiLlmClient;
 import cordis.agent.skill.SkillTools;
+import cordis.browser.BrowserPlugin;
+import cordis.browser.BrowserService;
 import cordis.core.Context;
 import cordis.core.Disposable;
 import cordis.core.Fiber;
@@ -91,6 +94,16 @@ import cordis.util.Maps;
  * <p>{@code --allow-host '*'} 意为放行<b>全部主机</b>（仍只限 http/https），
  * 只用于本地调试：此时 {@code /health} 的 {@code httpScope} 会是 {@code all}，
  * banner 也会明确提示。
+ *
+ * <h3>浏览器</h3>
+ *
+ * <p>同样<b>默认不装</b>：{@code --enable-browser} 才挂上 {@code browser_*} 八个工具
+ * （open / snapshot / click / type / press / wait / screenshot / close）。导航闸门复用
+ * {@link HttpAccessPolicy}，所以 {@code --allow-host} 写一遍就对 http 与浏览器同时生效；
+ * 两者都靠无障碍树上的 {@code [ref=eN]} 定位元素，模型不需要写 CSS 选择器。
+ *
+ * <p>没给 {@code --allow-host} 时浏览器策略是 deny-all：工具在，但任何导航都被拒——
+ * {@code /health} 的 {@code browserScope} 会写 {@code deny-all}，banner 也会点明。
  *
  * <h3>有意保留的边界</h3>
  *
@@ -220,6 +233,18 @@ public final class AgentServer implements AutoCloseable {
                                 "maxResponseBytes", config.httpMaxResponseBytes()),
                         Maps.of("http", true, "agent.tools", true)).await().join());
             }
+            // 浏览器要真的渲染任意站点、执行页面脚本，所以同样只在显式开关下装；
+            // 导航闸门与 http 工具共用 --allow-host，一套白名单管两种出网方式
+            if (config.browser()) {
+                fibers.add(ctx.registry.use(BrowserPlugin.INSTANCE, Maps.of(
+                        "policy", config.browserPolicy(),
+                        "screenshotDir", root.resolve("screenshots").toString(),
+                        "headless", config.browserHeadless(),
+                        "channel", config.browserChannel(),
+                        "timeoutMs", config.browserTimeoutMs()), null).await().join());
+                fibers.add(ctx.registry.use(BrowserTools.INSTANCE, Maps.of(),
+                        Maps.of("browser", true, "agent.tools", true)).await().join());
+            }
             for (Tool tool : config.tools()) {
                 fibers.add(ctx.registry.use(new ToolComponent(tool), Maps.of(),
                         Maps.of("agent.tools", true)).await().join());
@@ -297,6 +322,14 @@ public final class AgentServer implements AutoCloseable {
             body.put("http", httpAccess == null ? "disabled" : "enabled");
             if (httpAccess != null) {
                 body.put("httpScope", httpAccess.open() ? "all" : "allowlist");
+            }
+            BrowserService browser = ctx == null ? null : ctx.get("browser");
+            body.put("browser", browser == null ? "disabled" : "enabled");
+            if (browser != null) {
+                HttpAccessPolicy browserPolicy = config.browserPolicy();
+                body.put("browserScope", config.browserDenyAll() ? "deny-all"
+                        : (browserPolicy.open() ? "all" : "allowlist"));
+                body.put("browserPages", browser.pageCount());
             }
             ArrayNode names = body.putArray("tools");
             for (Tool tool : visibleTools()) {
@@ -668,6 +701,20 @@ public final class AgentServer implements AutoCloseable {
             httpLine = "on (白名单逐跳校验)";
         }
         System.out.println("[agent-server] http tools: " + httpLine);
+        if (server.config.browser()) {
+            HttpAccessPolicy browserPolicy = server.config.browserPolicy();
+            String browserLine;
+            if (server.config.browserDenyAll()) {
+                browserLine = "on (无白名单：所有导航都会被拒，用 --allow-host 放行)";
+            } else if (browserPolicy.open()) {
+                browserLine = "on (全部主机放行 —— 模型可驱动浏览器访问任意站点，仅建议本地调试)";
+            } else {
+                browserLine = "on (白名单逐跳校验，截图落在 <root>/screenshots)";
+            }
+            System.out.println("[agent-server] browser tools: " + browserLine);
+        } else {
+            System.out.println("[agent-server] browser tools: off (用 --enable-browser 启用)");
+        }
         if (server.skillCount() == 0) {
             System.out.println("[agent-server] 提示：把技能放到 "
                     + server.config.root().toAbsolutePath().resolve("skills")
@@ -697,6 +744,11 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --allow-write     放行文件写入（默认为只读：写操作被拒绝）");
         System.out.println("  --allow-host <h>  允许模型访问的主机，可重复（如 api.example.com、"
                 + "*.corp.com；'*' = 放行全部主机，仅建议本地调试）；不写则不装配 http 工具");
+        System.out.println("  --enable-browser  装配 browser_* 工具（真正渲染页面的无头浏览器），"
+                + "导航闸门复用 --allow-host；默认关闭");
+        System.out.println("  --browser-channel <name>  用系统安装的浏览器（默认 chrome；"
+                + "'' = 用 Playwright 自带二进制）");
+        System.out.println("  --browser-headful  有界面启动浏览器（便于看一眼它到底在干什么，默认无头）");
         System.out.println("  --help            显示本帮助");
         System.out.println();
         System.out.println("凭证只从环境变量读：" + ENV_APP_ID + " / " + ENV_BASE_URL
@@ -738,6 +790,17 @@ public final class AgentServer implements AutoCloseable {
 
         private int httpMaxResponseBytes = 65536;
 
+        private boolean browser;
+
+        /** 浏览器单独的导航策略；null 表示复用 {@link #httpAccess}，两者都空则 deny-all */
+        private HttpAccessPolicy browserAccess;
+
+        private String browserChannel = "chrome";
+
+        private boolean browserHeadless = true;
+
+        private int browserTimeoutMs = 20000;
+
         private String system;
 
         private LlmClient llm;
@@ -764,6 +827,12 @@ public final class AgentServer implements AutoCloseable {
                     config.allowWrite = true;
                 } else if ("--allow-host".equals(arg)) {
                     allowedHosts.add(value(args, ++i, arg));
+                } else if ("--enable-browser".equals(arg)) {
+                    config.browser = true;
+                } else if ("--browser-channel".equals(arg)) {
+                    config.browserChannel = value(args, ++i, arg);
+                } else if ("--browser-headful".equals(arg)) {
+                    config.browserHeadless = false;
                 } else if ("--port".equals(arg)) {
                     config.port = number(arg, value(args, ++i, arg));
                 } else if ("--bind".equals(arg)) {
@@ -887,6 +956,34 @@ public final class AgentServer implements AutoCloseable {
             return this;
         }
 
+        /** 装配 browser_* 工具（无头浏览器），导航闸门默认复用 {@link #httpAccess} */
+        public Config browser(boolean browser) {
+            this.browser = browser;
+            return this;
+        }
+
+        /** 给浏览器单独的策略（不跟 http 工具共用白名单时用） */
+        public Config browserAccess(HttpAccessPolicy policy) {
+            this.browserAccess = policy;
+            return this;
+        }
+
+        /** 用哪个浏览器：系统 Chrome（默认）/ 自带二进制（传空串）/ 其他 channel 名 */
+        public Config browserChannel(String channel) {
+            this.browserChannel = channel;
+            return this;
+        }
+
+        public Config browserHeadless(boolean headless) {
+            this.browserHeadless = headless;
+            return this;
+        }
+
+        public Config browserTimeoutMs(int browserTimeoutMs) {
+            this.browserTimeoutMs = browserTimeoutMs;
+            return this;
+        }
+
         /** 覆盖默认 system 指令（技能清单仍会追加在后面） */
         public Config system(String system) {
             this.system = system;
@@ -972,6 +1069,35 @@ public final class AgentServer implements AutoCloseable {
 
         public int httpMaxResponseBytes() {
             return httpMaxResponseBytes;
+        }
+
+        public boolean browser() {
+            return browser;
+        }
+
+        /** 实际生效的导航策略：单独配置 > http 白名单 > 拒绝一切 */
+        public HttpAccessPolicy browserPolicy() {
+            if (browserAccess != null) {
+                return browserAccess;
+            }
+            return httpAccess == null ? HttpAccessPolicy.denyAll() : httpAccess;
+        }
+
+        /** 没有任何白名单可复用：工具虽然装了，但任何导航都过不了 */
+        public boolean browserDenyAll() {
+            return browserAccess == null && httpAccess == null;
+        }
+
+        public String browserChannel() {
+            return browserChannel;
+        }
+
+        public boolean browserHeadless() {
+            return browserHeadless;
+        }
+
+        public int browserTimeoutMs() {
+            return browserTimeoutMs;
         }
 
         public String system() {

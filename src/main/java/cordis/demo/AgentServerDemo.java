@@ -74,6 +74,7 @@ public final class AgentServerDemo {
         try {
             failures = runSelftest(server.port());
             failures += runHttpSelftest(root);
+            failures += runBrowserSelftest(root);
         } finally {
             server.close();
         }
@@ -265,6 +266,90 @@ public final class AgentServerDemo {
             }
         } finally {
             open.close();
+        }
+        return failures;
+    }
+
+    /**
+     * 浏览器工具在<b>正式装配</b>（{@code AgentServer.start()}）下的可见性与
+     * 可用性：默认不挂；显式开启后八个工具出现，且真能渲染页面（打开自己的
+     * {@code /health}，从快照里读到 JSON 文本）——装配层与能力层不是两张皮。
+     */
+    private static int runBrowserSelftest(Path root) throws Exception {
+        int failures = 0;
+
+        AgentServer plain = new AgentServer(selftestConfig(root.resolve("no-browser"))).start();
+        try {
+            JsonNode health = call("http://127.0.0.1:" + plain.port() + "/health", "GET", null);
+            boolean disabledOk = "disabled".equals(health.path("browser").asText())
+                    && !toolList(health).contains("browser_open");
+            System.out.println("   " + (disabledOk ? "[PASS]" : "[FAIL]")
+                    + " 未开启浏览器 → browser=" + health.path("browser").asText()
+                    + ", " + health.path("tools").size() + " tools");
+            if (!disabledOk) {
+                failures++;
+            }
+        } finally {
+            plain.close();
+        }
+
+        AgentServer server = new AgentServer(selftestConfig(root.resolve("with-browser"))
+                .httpAccess(HttpAccessPolicy.hosts("127.0.0.1"))
+                .browser(true)).start();
+        try {
+            String base = "http://127.0.0.1:" + server.port();
+            JsonNode health = call(base + "/health", "GET", null);
+            int browserTools = 0;
+            for (String name : toolList(health)) {
+                if (name.startsWith("browser_")) {
+                    browserTools++;
+                }
+            }
+            boolean enabledOk = "enabled".equals(health.path("browser").asText())
+                    && "allowlist".equals(health.path("browserScope").asText())
+                    && browserTools == 8
+                    && health.path("browserPages").asInt() == 0;
+            System.out.println("   " + (enabledOk ? "[PASS]" : "[FAIL]")
+                    + " --enable-browser → browser=" + health.path("browser").asText()
+                    + ", scope=" + health.path("browserScope").asText()
+                    + ", " + browserTools + " browser tools");
+            if (!enabledOk) {
+                failures++;
+            }
+
+            // 端到端：拿正式装配出来的工具真的开一次页面（白名单内 = 自己）
+            Tool open = findTool(server.context().get("agent.tools"), "browser_open");
+            long begin = System.currentTimeMillis();
+            JsonNode opened = JSON.readTree(open.run("{\"url\":\"" + base
+                    + "/health\",\"waitMs\":300}"));
+            long elapsed = System.currentTimeMillis() - begin;
+            String content = opened.path("text").asText() + opened.path("snapshot").asText();
+            boolean renderOk = content.contains("status") && content.contains("ok");
+            System.out.println("   " + (renderOk ? "[PASS]" : "[FAIL]")
+                    + " browser_open 渲染自己的 /health → " + elapsed + "ms, "
+                    + content.length() + " chars");
+            if (!renderOk) {
+                failures++;
+            }
+        } finally {
+            server.close();
+        }
+
+        // 没有白名单时工具也在，但导航一律被拒：/health 必须能把这件事说出来
+        AgentServer deny = new AgentServer(selftestConfig(root.resolve("browser-denied"))
+                .browser(true)).start();
+        try {
+            JsonNode health = call("http://127.0.0.1:" + deny.port() + "/health", "GET", null);
+            boolean denyOk = "enabled".equals(health.path("browser").asText())
+                    && "deny-all".equals(health.path("browserScope").asText());
+            System.out.println("   " + (denyOk ? "[PASS]" : "[FAIL]")
+                    + " 无白名单 → browser=" + health.path("browser").asText()
+                    + ", scope=" + health.path("browserScope").asText());
+            if (!denyOk) {
+                failures++;
+            }
+        } finally {
+            deny.close();
         }
         return failures;
     }

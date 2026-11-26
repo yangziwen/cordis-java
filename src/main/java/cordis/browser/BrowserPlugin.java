@@ -37,6 +37,9 @@ public class BrowserPlugin implements Component {
 
     public static final BrowserPlugin INSTANCE = new BrowserPlugin();
 
+    /** 预热前的宽限期：让「刚装配就关闭」的场景直接跳过预热 */
+    private static final long PREWARM_GRACE_MS = 200;
+
     private BrowserPlugin() {
     }
 
@@ -60,12 +63,26 @@ public class BrowserPlugin implements Component {
                 config.get("userAgent") == null ? null : String.valueOf(config.get("userAgent")));
 
         ctx.scheduler.<Boolean>offload(() -> {
+            // 给「装配完立刻关闭」的场景一个干净的退出点：预热共 13s，而关闭
+            // 往往在几十毫秒内就发生，先把 driver 拉到一半再被掐断只会留下脏
+            // node 进程和一大段栈
+            try {
+                Thread.sleep(PREWARM_GRACE_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Boolean.TRUE;
+            }
+            if (service.isClosed()) {
+                return Boolean.TRUE;
+            }
             try {
                 service.prewarmSync();
                 System.out.println("[browser] prewarmed: " + service);
             } catch (Throwable t) {
-                System.out.println("[browser] prewarm failed (tools will retry on demand): "
-                        + t.getMessage());
+                if (!service.isClosed()) {
+                    System.out.println("[browser] prewarm failed (tools will retry on demand): "
+                            + t.getMessage());
+                }
             }
             return Boolean.TRUE;
         });
