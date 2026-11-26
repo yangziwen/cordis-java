@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -367,16 +368,49 @@ public class BrowserService extends Service {
             if (browser != null && browser.isConnected()) {
                 return browser;
             }
+            long begin = System.currentTimeMillis();
             if (playwright == null) {
-                playwright = Playwright.create();
+                // 首次 9s（解压 driver bundle），之后走 OS 文件缓存约 0.4s
+                System.out.println("[browser] starting driver (node subprocess)");
+                Playwright.CreateOptions createOptions = createOptions();
+                playwright = createOptions == null
+                        ? Playwright.create()
+                        : Playwright.create(createOptions);
             }
+            long driverReady = System.currentTimeMillis();
             BrowserType.LaunchOptions options = new BrowserType.LaunchOptions().setHeadless(headless);
             if (!channel.isEmpty()) {
                 options.setChannel(channel);
             }
             browser = playwright.chromium().launch(options);
+            long launched = System.currentTimeMillis();
+            // 启动是低频事件（一次进程一次），把 9s+4s 拆开打出来，卡住时能定位
+            System.out.println("[browser] driver ready in " + (driverReady - begin)
+                    + "ms, browser up in " + (launched - driverReady) + "ms ("
+                    + (channel.isEmpty() ? "bundled" : channel) + ", headless=" + headless + ")");
             return browser;
         }
+    }
+
+    /**
+     * 用系统浏览器时（channel 非空）告诉 driver「不要自动安装浏览器」。
+     *
+     * <p>很多机器上只有系统 Chrome，没有 Playwright 的 chromium / firefox / webkit；
+     * 一旦允许自动安装，{@code create()} 会去下载几百 MB（内网无外网时直接失败，
+     * 整个浏览器能力用不了）。这里用 {@code CreateOptions.setEnv} 注入，而不是要求
+     * 调用方 {@code export} 环境变量——配置只留一个口子。实测 setEnv 是<b>合并</b>
+     * 到当前环境（PATH 等保留），且 {@code channel=chrome} 在空 browsers 目录下照样
+     * 能起 Chrome 158。
+     *
+     * <p>用自带二进制时（channel 空）不注入：那种场景本来就需要自带浏览器。
+     */
+    private Playwright.CreateOptions createOptions() {
+        if (channel.isEmpty()) {
+            return null;
+        }
+        Map<String, String> env = new HashMap<String, String>();
+        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+        return new Playwright.CreateOptions().setEnv(env);
     }
 
     private Session session(String pageId) {

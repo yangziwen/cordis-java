@@ -87,10 +87,14 @@ public class BrowserPlugin implements Component {
             return Boolean.TRUE;
         });
 
-        return () -> ctx.scheduler.<Boolean>offload(() -> {
-            service.shutdownSync();
-            return Boolean.TRUE;
-        });
+        return () -> {
+            System.out.println("[browser] closing driver");
+            ctx.scheduler.<Boolean>offload(() -> {
+                service.shutdownSync();
+                System.out.println("[browser] driver closed");
+                return Boolean.TRUE;
+            });
+        };
     }
 
     private static String stringConfig(Map<String, Object> config, String key, String fallback) {
