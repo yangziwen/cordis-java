@@ -89,12 +89,12 @@ java -cp "$CP" cordis.demo.LifecycleDemo
 
 ### 2. 启动可对话的 agent 服务
 
-凭证仅从环境变量读取（公司 AIGC 网关，OpenAI 兼容）：
+凭证仅从环境变量读取（OpenAI 兼容；换成 vLLM / Ollama / DeepSeek 等兼容端点时只改 base 地址）：
 
 ```bash
-export CORDIS_JAVA_APP_ID=<AppId>          # 必填
-export CORDIS_JAVA_BASE_URL=https://aigc.sankuai.com/v1/openai/native  # 必填
-export CORDIS_JAVA_MODEL=glm-5.3          # 可选
+export CORDIS_JAVA_APP_ID=<你的 OpenAI API Key>   # 必填（作为 Bearer Token 发送）
+export CORDIS_JAVA_BASE_URL=https://api.openai.com/v1    # 必填（填到 /v1 这一级即可）
+export CORDIS_JAVA_MODEL=gpt-4o                 # 可选，不设用默认模型
 
 # fat jar 方式（推荐）：一个 jar 同时是两个入口的启动器
 java -jar target/cordis-java-1.0.0-SNAPSHOT.jar server --port 8787 --root ~/agent-ws --allow-write
@@ -469,8 +469,8 @@ root.registry.use(SkillTools.INSTANCE, Maps.of(),
 ### 启动
 
 ```bash
-export CORDIS_JAVA_APP_ID=<AppId>
-export CORDIS_JAVA_BASE_URL=<OpenAI 兼容网关地址>
+export CORDIS_JAVA_APP_ID=<你的 OpenAI API Key>
+export CORDIS_JAVA_BASE_URL=https://api.openai.com/v1
 java -cp "$CP" cordis.app.AgentServer [选项]
 ```
 
