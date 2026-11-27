@@ -486,6 +486,7 @@ java -cp "$CP" cordis.app.AgentServer [选项]
 | `--browser-channel` | `chrome` | 使用系统 Chrome；置空则使用 Playwright 自带二进制 |
 | `--browser-headful` | 无头模式 | 以有界面模式启动，便于观察 |
 | `--max-steps` | 32 | 单次对话的模型轮数上限；打满后**强制收尾**——不带工具清单再问一次出总结，`stopReason` 仍为 `MAX_STEPS` |
+| `--debug` | 关闭 | 观测模式：SSE 推 `stats` 帧（每次模型调用的历史文本量，按 system/user/assistant/tool 分桶，字符口径），`final` 帧与一次性 JSON 附 `requestCharsByStep`（逐次增长曲线）与 `finalRequestChars`（末次请求 = 历史 + system） |
 | `--max-sessions` `--model` `--base-url` | — | 见 `--help` |
 
 ### 会话记忆（SQLite 持久化）

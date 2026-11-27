@@ -103,13 +103,22 @@ public class AgentService extends Service {
     /** 同轮多工具的并发池；理由见类注释的线程模型 */
     private final ExecutorService toolPool;
 
+    /** debug 观测：每次 llm.chat 前量历史文本，经 onStats 回调（默认关） */
+    private final boolean statsEnabled;
+
     public AgentService(Context ctx, LlmClient llm, ToolService tools, int maxSteps,
                         SystemProvider system) {
+        this(ctx, llm, tools, maxSteps, system, false);
+    }
+
+    public AgentService(Context ctx, LlmClient llm, ToolService tools, int maxSteps,
+                        SystemProvider system, boolean statsEnabled) {
         super(ctx, "agent");
         this.llm = llm;
         this.tools = tools;
         this.maxSteps = maxSteps;
         this.system = system;
+        this.statsEnabled = statsEnabled;
         this.toolPool = Executors.newCachedThreadPool(r -> {
             Thread thread = new Thread(r, "agent-tool");
             thread.setDaemon(true);
@@ -139,9 +148,10 @@ public class AgentService extends Service {
     public AgentCall run(final List<LlmMessage> history, final String input,
                          final AgentListener listener) {
         final AgentCall call = new AgentCall(ctx.scheduler.defer());
+        final boolean stats = statsEnabled;
         ctx.scheduler.offload(() -> {
             try {
-                call.complete(runBlocking(history, input, call, listener));
+                call.complete(runBlocking(history, input, call, listener, stats));
             } catch (Throwable t) {
                 call.fail(t);
             }
@@ -159,17 +169,19 @@ public class AgentService extends Service {
      */
     AgentResult runBlocking(List<LlmMessage> history, String input, AgentCall call)
             throws Exception {
-        return runBlocking(history, input, call, AgentListener.NONE);
+        return runBlocking(history, input, call, AgentListener.NONE, false);
     }
 
     /**
-     * loop 主体的完整版：多一个会话级监听器。
+     * loop 主体的完整版：多一个会话级监听器与 debug 观测开关。
      *
      * <p>监听器回调与全局事件在同一位置发出（顺序一致），区别只是前者同步
      * 直调、后者经 {@code emit} 投回主循环。回调异常在此降级为 stderr。
+     * stats 打开时每次 {@code llm.chat} 前量一次历史文本（见 {@link HistoryStats}）
+     * 并回调 {@code onStats}。
      */
     AgentResult runBlocking(List<LlmMessage> history, String input, AgentCall call,
-                            AgentListener listener) throws Exception {
+                            AgentListener listener, boolean stats) throws Exception {
         final AgentListener observer = listener == null ? AgentListener.NONE : listener;
         history.add(LlmMessage.user(input));
         int toolCallCount = 0;
@@ -181,7 +193,11 @@ public class AgentService extends Service {
             ctx.events.emit(EVT_STEP, step, available.size());
             notifyStep(observer, step, available.size());
             // system 每轮重新求值：skill 清单等动态段可能在上一轮之后被 reload 刷过
-            LlmReply reply = llm.chat(history, available, system == null ? null : system.provide());
+            String systemPrompt = system == null ? null : system.provide();
+            if (stats) {
+                notifyStats(observer, step, measure(history, systemPrompt));
+            }
+            LlmReply reply = llm.chat(history, available, systemPrompt);
             history.add(LlmMessage.assistant(reply));
             if (!reply.hasToolCalls()) {
                 ctx.events.emit(EVT_REPLY, reply.content);
@@ -211,8 +227,11 @@ public class AgentService extends Service {
             throw new CancellationException("agent run cancelled");
         }
         try {
-            LlmReply forced = llm.chat(history, Collections.<Tool>emptyList(),
-                    system == null ? null : system.provide());
+            String systemPrompt = system == null ? null : system.provide();
+            if (stats) {
+                notifyStats(observer, maxSteps + 1, measure(history, systemPrompt));
+            }
+            LlmReply forced = llm.chat(history, Collections.<Tool>emptyList(), systemPrompt);
             // 不给工具时个别模型仍可能回 tool_calls：忽略调用只取文本，
             // 否则 dangling tool_calls 会把历史弄成非法的配对
             String content = forced.content == null ? "" : forced.content;
@@ -263,6 +282,37 @@ public class AgentService extends Service {
         } catch (Throwable t) {
             AgentListener.guard("onReply", t);
         }
+    }
+
+    private static void notifyStats(AgentListener listener, int step, HistoryStats stats) {
+        try {
+            listener.onStats(step, stats);
+        } catch (Throwable t) {
+            AgentListener.guard("onStats", t);
+        }
+    }
+
+    /**
+     * 量一次历史文本：按 role 分桶累加 content 长度，system 单独报——
+     * 原文口径，不含 JSON 转义与工具声明（见 {@link HistoryStats}）。
+     */
+    private static HistoryStats measure(List<LlmMessage> history, String systemPrompt) {
+        int user = 0;
+        int assistant = 0;
+        int tool = 0;
+        for (LlmMessage message : history) {
+            int length = message.content.length();
+            if ("user".equals(message.role)) {
+                user += length;
+            } else if ("assistant".equals(message.role)) {
+                assistant += length;
+            } else {
+                tool += length;
+            }
+        }
+        int systemChars = systemPrompt == null ? 0 : systemPrompt.length();
+        return new HistoryStats(systemChars, user, assistant, tool,
+                user + assistant + tool, history.size());
     }
 
     /** 并发执行本轮全部工具，返回与入参同序的结果 */

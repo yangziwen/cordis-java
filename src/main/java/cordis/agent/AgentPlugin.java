@@ -19,7 +19,9 @@ import cordis.core.Disposable;
  *   <li>{@code maxSteps}（默认 8）单次 run 的模型调用轮数上限——无此上限时，
  *       一个执着的模型可以无限请求工具；</li>
  *   <li>{@code system}（可选）system 指令：传 String 为固定基底，传
- *       {@link SystemProvider} 则每轮求值（动态段，如 skill 清单）。</li>
+ *       {@link SystemProvider} 则每轮求值（动态段，如 skill 清单）；</li>
+ *   <li>{@code statsEnabled}（默认 false）debug 观测：每次 llm.chat 前
+ *       量历史文本，经 {@code AgentListener.onStats} 回调。</li>
  * </ul>
  *
  * <p>apply 返回的清理只做一件事：关掉 {@link AgentService} 的工具并发池
@@ -45,14 +47,15 @@ public class AgentPlugin implements Component {
             throw new IllegalArgumentException("AgentPlugin requires config \"llm\""
                     + " of type LlmClient (got: " + (llm == null ? "null" : llm.getClass()) + ")");
         }
-        int maxSteps = (int) number(config, "maxSteps", 8);
-        SystemProvider system = systemOf(config.get("system"));
+int maxSteps = (int) number(config, "maxSteps", 8);
+SystemProvider system = systemOf(config.get("system"));
+boolean statsEnabled = Boolean.TRUE.equals(config.get("statsEnabled"));
 
-        // 同一 fiber 内直接传引用：两个服务同生共死，不存在解析时序问题
-        ToolService tools = new ToolService(ctx);
-        final AgentService agent = new AgentService(ctx, (LlmClient) llm, tools,
-                maxSteps, system);
-        return () -> agent.shutdown();
+// 同一 fiber 内直接传引用：两个服务同生共死，不存在解析时序问题
+ToolService tools = new ToolService(ctx);
+final AgentService agent = new AgentService(ctx, (LlmClient) llm, tools,
+maxSteps, system, statsEnabled);
+return () -> agent.shutdown();
     }
 
     /** String → 常量基底；SystemProvider → 直接使用；两者叠加，null → 无 system */

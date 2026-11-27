@@ -245,14 +245,28 @@ public final class AgentCli {
         } else if ("tool".equals(type)) {
             System.out.println("   ← " + event.path("name").asText()
                     + " " + event.path("result").asText());
+        } else if ("stats".equals(type)) {
+            System.out.println("   ⇅ " + event.path("step").asInt()
+                    + " 轮历史 " + event.path("historyChars").asLong() + " 字"
+                    + "（system " + event.path("systemChars").asLong()
+                    + " / user " + event.path("userChars").asLong()
+                    + " / assistant " + event.path("assistantChars").asLong()
+                    + " / tool " + event.path("toolChars").asLong()
+                    + "，" + event.path("messages").asInt() + " 条）");
         } else if ("final".equals(type)) {
             System.out.println();
             System.out.println(event.path("answer").asText());
             System.out.println();
-            System.out.println("   " + event.path("stopReason").asText()
-                    + "，" + event.path("steps").asInt() + " 轮，"
-                    + event.path("toolCalls").asInt() + " 次工具，"
-                    + (System.currentTimeMillis() - start) + "ms");
+            StringBuilder summary = new StringBuilder();
+            summary.append("   ").append(event.path("stopReason").asText())
+                    .append("，").append(event.path("steps").asInt()).append(" 轮，")
+                    .append(event.path("toolCalls").asInt()).append(" 次工具，")
+                    .append((System.currentTimeMillis() - start)).append("ms");
+            if (event.has("finalRequestChars")) {
+                summary.append("；末次请求 ").append(event.path("finalRequestChars").asLong())
+                        .append(" 字，逐轮 ").append(event.path("requestCharsByStep").toString());
+            }
+            System.out.println(summary);
             System.out.println();
         } else if ("error".equals(type)) {
             System.out.println("[错误] " + event.path("message").asText());
@@ -297,9 +311,18 @@ public final class AgentCli {
             JsonNode events = reply.get("events");
             if (events != null) {
                 for (JsonNode event : events) {
-                    if ("tool".equals(event.path("type").asText())) {
+                    String type = event.path("type").asText();
+                    if ("tool".equals(type)) {
                         System.out.println("   [tool] " + event.path("name").asText()
                                 + " -> " + event.path("result").asText());
+                    } else if ("stats".equals(type)) {
+                        System.out.println("   ⇅ " + event.path("step").asInt()
+                                + " 轮历史 " + event.path("historyChars").asLong() + " 字"
+                                + "（system " + event.path("systemChars").asLong()
+                                + " / user " + event.path("userChars").asLong()
+                                + " / assistant " + event.path("assistantChars").asLong()
+                                + " / tool " + event.path("toolChars").asLong()
+                                + "，" + event.path("messages").asInt() + " 条）");
                     }
                 }
             }

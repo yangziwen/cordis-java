@@ -63,6 +63,13 @@ public interface AgentListener {
     default void onReply(String content) {
     }
 
+    /**
+     * 每次模型调用前后的历史文本统计（观测口径：字符数，见 {@link HistoryStats}）。
+     * 由 AgentService 在 debug 观测打开时回调，正常模式不触发。
+     */
+    default void onStats(int step, HistoryStats stats) {
+    }
+
     /** 回调失败统一降级为 WARN：观察者不该影响对话 */
     static void guard(String hook, Throwable error) {
         LOG.warn("listener.{} threw", hook, error);

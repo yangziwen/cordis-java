@@ -256,7 +256,8 @@ public final class AgentServer implements AutoCloseable {
                 return section.isEmpty() ? base : base + "\n\n" + section;
             };
             fibers.add(ctx.registry.use(AgentPlugin.INSTANCE,
-                    Maps.of("llm", llm, "maxSteps", config.maxSteps(), "system", system),
+                    Maps.of("llm", llm, "maxSteps", config.maxSteps(), "system", system,
+                            "statsEnabled", config.debug()),
                     null).await().join());
             fibers.add(ctx.registry.use(FileSystemTools.INSTANCE,
                     Maps.of(), Maps.of("filesystem", true, "agent.tools", true))
@@ -360,6 +361,7 @@ public final class AgentServer implements AutoCloseable {
                     : config.root().toAbsolutePath().resolve("memory.db").toString());
             body.put("skills", skillCount());
             body.put("sessions", sessions.size());
+        body.put("debug", config.debug());
             body.put("write", config.approval() != null ? "custom"
                     : (config.allowWrite() ? "allowed" : "denied"));
             HttpAccessPolicy httpAccess = config.httpAccess();
@@ -535,6 +537,9 @@ public final class AgentServer implements AutoCloseable {
         for (Map<String, Object> event : collected) {
             events.add(JSON.valueToTree(event));
         }
+        if (config.debug()) {
+            body.setAll((ObjectNode) JSON.valueToTree(statsSummary(statsEventsOf(collected))));
+        }
         write(exchange, 200, JSON.writeValueAsBytes(body));
     }
 
@@ -547,6 +552,7 @@ public final class AgentServer implements AutoCloseable {
         final OutputStream out = exchange.getResponseBody();
         final Object writeLock = new Object();
         final long start = System.currentTimeMillis();
+        final List<Map<String, Object>> statsEvents = new ArrayList<Map<String, Object>>();
         try {
             AgentListener listener = new AgentListener() {
                 @Override
@@ -569,6 +575,13 @@ public final class AgentServer implements AutoCloseable {
                     event.put("result", brief(result, EVENT_RESULT_MAX));
                     sseWrite(out, writeLock, event);
                 }
+
+                @Override
+                public void onStats(int step, cordis.agent.HistoryStats stats) {
+                    Map<String, Object> event = statsEvent(step, stats);
+                    statsEvents.add(event);
+                    sseWrite(out, writeLock, event);
+                }
             };
             AgentResult result;
             synchronized (history) {
@@ -583,6 +596,9 @@ public final class AgentServer implements AutoCloseable {
             finalEvent.put("steps", result.steps);
             finalEvent.put("toolCalls", result.toolCalls);
             finalEvent.put("elapsedMs", System.currentTimeMillis() - start);
+            if (config.debug()) {
+                finalEvent.putAll(statsSummary(statsEvents));
+            }
             sseWrite(out, writeLock, finalEvent);
         } catch (Exception e) {
             LOG.warn("chat stream failed, session={}", session, e);
@@ -621,7 +637,58 @@ public final class AgentServer implements AutoCloseable {
                 event.put("result", brief(result, EVENT_RESULT_MAX));
                 sink.add(event);
             }
+
+            @Override
+            public void onStats(int step, cordis.agent.HistoryStats stats) {
+                sink.add(statsEvent(step, stats));
+            }
         };
+    }
+
+    /** stats 事件帧：SSE 推帧与一次性 events 数组共用同一形状 */
+    private static Map<String, Object> statsEvent(int step, cordis.agent.HistoryStats stats) {
+        Map<String, Object> event = event("stats");
+        event.put("step", step);
+        event.put("systemChars", stats.systemChars);
+        event.put("historyChars", stats.totalChars);
+        event.put("userChars", stats.userChars);
+        event.put("assistantChars", stats.assistantChars);
+        event.put("toolChars", stats.toolChars);
+        event.put("messages", stats.messages);
+        return event;
+    }
+
+    /** 从收集的事件里挑出 stats 帧（一次性 JSON 路径的汇总用） */
+    private static List<Map<String, Object>> statsEventsOf(List<Map<String, Object>> events) {
+        List<Map<String, Object>> statsEvents = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> event : events) {
+            if ("stats".equals(event.get("type"))) {
+                statsEvents.add(event);
+            }
+        }
+        return statsEvents;
+    }
+
+    /**
+     * debug 模式的 final 汇总：逐次调用的历史文本量（增长曲线）与最后一次
+     * 请求的实际文本量（历史 + system）。stats 帧缺失时返回空 Map，不写入。
+     */
+    private static Map<String, Object> statsSummary(List<Map<String, Object>> statsEvents) {
+        Map<String, Object> summary = new LinkedHashMap<String, Object>();
+        if (statsEvents.isEmpty()) {
+            return summary;
+        }
+        List<Integer> byStep = new ArrayList<Integer>();
+        int lastRequest = 0;
+        for (Map<String, Object> stats : statsEvents) {
+            int historyChars = (Integer) stats.get("historyChars");
+            int systemChars = (Integer) stats.get("systemChars");
+            byStep.add(historyChars);
+            lastRequest = historyChars + systemChars;
+        }
+        summary.put("requestCharsByStep", byStep);
+        summary.put("finalRequestChars", lastRequest);
+        return summary;
     }
 
     private static Map<String, Object> stepEvent(int step, int visibleTools) {
@@ -827,8 +894,10 @@ public final class AgentServer implements AutoCloseable {
                 + (server.config.approval() != null ? "custom gate"
                         : (server.config.allowWrite() ? "allowed (--allow-write)"
                                 : "denied (只读；需要写入时加 --allow-write)")));
-        System.out.println("[agent-server] skills: " + server.skillCount()
-                + "  tools: " + server.visibleTools().size());
+System.out.println("[agent-server] skills: " + server.skillCount()
++ "  tools: " + server.visibleTools().size());
+System.out.println("[agent-server] debug: " + (server.config.debug()
+? "on（SSE stats 帧 + final 汇总）" : "off（--debug 开启观测）"));
         HttpAccessPolicy httpAccess = server.config.httpAccess();
         String httpLine;
         if (httpAccess == null) {
@@ -883,6 +952,7 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --base-url <url>  OpenAI 兼容网关地址（无默认值；需设置环境变量 "
                 + ENV_BASE_URL + " 或本参数）");
         System.out.println("  --allow-write     放行文件写入（默认为只读：写操作被拒绝）");
+System.out.println("  --debug            观测模式：SSE 推 stats 帧、final 带逐次历史文本统计");
         System.out.println("  --allow-host <h>  允许模型访问的主机，可重复（如 api.example.com、"
                 + "*.corp.com；'*' = 放行全部主机，仅建议本地调试）；不写则不装配 http 工具");
         System.out.println("  --enable-browser  装配 browser_* 工具（真正渲染页面的无头浏览器），"
@@ -954,6 +1024,8 @@ public final class AgentServer implements AutoCloseable {
 
         private boolean help;
 
+private boolean debug;
+
         public static Config parse(String[] args) {
             Config config = new Config();
             config.appId = env(ENV_APP_ID, null);
@@ -964,9 +1036,11 @@ public final class AgentServer implements AutoCloseable {
                 String arg = args[i];
                 if ("--help".equals(arg) || "-h".equals(arg)) {
                     config.help = true;
-                } else if ("--allow-write".equals(arg)) {
-                    config.allowWrite = true;
-                } else if ("--allow-host".equals(arg)) {
+} else if ("--allow-write".equals(arg)) {
+config.allowWrite = true;
+} else if ("--debug".equals(arg)) {
+config.debug = true;
+} else if ("--allow-host".equals(arg)) {
                     allowedHosts.add(value(args, ++i, arg));
                 } else if ("--enable-browser".equals(arg)) {
                     config.browser = true;
@@ -1261,9 +1335,14 @@ public final class AgentServer implements AutoCloseable {
             return tools;
         }
 
-        public boolean help() {
-            return help;
-        }
+public boolean help() {
+return help;
+}
+
+/** 观测模式：stats 帧与 final 汇总（历史文本字符数口径） */
+public boolean debug() {
+return debug;
+}
 
     }
 
