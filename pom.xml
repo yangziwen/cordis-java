@@ -84,4 +84,61 @@
             <version>1.65.1</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                fat jar：mvn package 直接产出可执行 jar（Main-Class = Launcher），
+                java -jar cordis-java-*.jar server|cli 一个入口走两个应用。
+
+                - driver-bundle 必须排除（229MB，Playwright 之所以不用 shade 的原因）：
+                  排除后 enable-browser 选项不可用（运行时缺驱动会报错），其余能力
+                  （fs / sqlite / http / skill / 模型循环）全部自包含；
+                  需要浏览器时仍用 classpath 方式跑。
+                - ServicesResourceTransformer 合并 META-INF/services：slf4j 2.x 用
+                  ServiceLoader 找 provider，sqlite-jdbc 也注册 java.sql.Driver；
+                  多 jar 合并成 fat jar 时这些描述文件必须拼接而不是互相覆盖。
+                - module-info.class（jackson 带）在 Java 8 目标下无用且会撞名，剔除。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.2.4</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>com.microsoft.playwright:driver-bundle</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>cordis.app.Launcher</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

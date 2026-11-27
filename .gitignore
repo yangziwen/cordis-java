@@ -115,3 +115,6 @@ local.properties
 
 # VS Code
 .vscode/
+
+.agent-cli-session
+agent-workspace/

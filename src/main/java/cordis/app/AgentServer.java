@@ -294,8 +294,8 @@ public final class AgentServer implements AutoCloseable {
             http = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
             http.createContext("/health", this::handleHealth);
             http.createContext("/chat", this::handleChat);
-        http.createContext("/reset", this::handleReset);
-        http.createContext("/history", this::handleHistory);
+            http.createContext("/reset", this::handleReset);
+            http.createContext("/history", this::handleHistory);
             http.setExecutor(Executors.newFixedThreadPool(HTTP_THREADS, r -> {
                 Thread thread = new Thread(r, "agent-server-http");
                 thread.setDaemon(true);

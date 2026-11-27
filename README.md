@@ -58,7 +58,11 @@
 # 编译
 mvn compile
 
-# 生成运行期 classpath（后续示例统一使用）
+# 打 fat jar（可执行，一个 jar 走 server / cli 两个入口）
+mvn package -DskipTests
+# → target/cordis-java-1.0.0-SNAPSHOT.jar（约 14MB）
+
+# 生成运行期 classpath（classpath 方式启动时使用）
 mvn dependency:build-classpath -Dmdep.outputFile=target/cp.txt
 
 # 统一引用方式：
@@ -68,6 +72,8 @@ CP="target/classes:$(cat target/cp.txt)"
 > 依赖已存在于本地仓库时，可追加 `-o` 使用离线解析以缩短构建时间；首次拉取（尤其 218MB 的 Playwright 驱动）需要联网。
 
 > Playwright 引入 **218MB** 的 `driver-bundle` jar（229 MB 十进制），首次依赖解析耗时明显增加；该依赖仅服务于 `cordis.browser`，内核不参与。
+
+> fat jar 有意排除了 driver-bundle：`java -jar` 启动的服务里 `--enable-browser` 不可用（其余能力自包含）；需要浏览器时用 `$CP` classpath 方式启动。
 
 ---
 
@@ -90,13 +96,19 @@ export CORDIS_JAVA_APP_ID=<AppId>          # 必填
 export CORDIS_JAVA_BASE_URL=https://aigc.sankuai.com/v1/openai/native  # 必填
 export CORDIS_JAVA_MODEL=glm-5.3          # 可选
 
+# fat jar 方式（推荐）：一个 jar 同时是两个入口的启动器
+java -jar target/cordis-java-1.0.0-SNAPSHOT.jar server --port 8787 --root ~/agent-ws --allow-write
+
+# 或 classpath 方式
 java -cp "$CP" cordis.app.AgentServer --port 8787 --root ~/agent-ws --allow-write
 ```
 
 在另一个终端启动客户端：
 
 ```bash
-java -cp "$CP" cordis.app.AgentCli            # 默认使用 SSE，逐轮输出
+java -jar target/cordis-java-1.0.0-SNAPSHOT.jar cli   # 默认使用 SSE，逐轮输出
+# 或 classpath 方式：
+java -cp "$CP" cordis.app.AgentCli
 ```
 
 也可直接使用 curl：
