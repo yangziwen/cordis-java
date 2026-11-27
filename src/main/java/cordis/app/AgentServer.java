@@ -60,7 +60,8 @@ import cordis.util.Maps;
  * 用 HTTP 暴露对话接口。配套控制台客户端见 {@link AgentCli}。
  *
  * <pre>
- *   export MT_AIGC_APP_ID=xxx
+ *   export CORDIS_JAVA_APP_ID=xxx
+ *   export CORDIS_JAVA_BASE_URL=<OpenAI 兼容网关地址>
  *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentServer
  *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentServer --port 9000 \
  *        --root ~/agent-ws --allow-write
@@ -138,15 +139,13 @@ public final class AgentServer implements AutoCloseable {
 
     public static final String DEFAULT_HOST = "127.0.0.1";
 
-    public static final String DEFAULT_BASE_URL = "https://aigc.sankuai.com/v1/openai/native";
+    public static final String DEFAULT_MODEL = "glm-5.3";
 
-    public static final String DEFAULT_MODEL = "LongCat-Flash-Chat";
+    public static final String ENV_APP_ID = "CORDIS_JAVA_APP_ID";
 
-    public static final String ENV_APP_ID = "MT_AIGC_APP_ID";
+    public static final String ENV_BASE_URL = "CORDIS_JAVA_BASE_URL";
 
-    public static final String ENV_BASE_URL = "MT_AIGC_BASE_URL";
-
-    public static final String ENV_MODEL = "MT_AIGC_MODEL";
+    public static final String ENV_MODEL = "CORDIS_JAVA_MODEL";
 
     /** 单条工具结果在事件里的截断长度 */
     private static final int EVENT_RESULT_MAX = 300;
@@ -578,6 +577,11 @@ public final class AgentServer implements AutoCloseable {
                     + " variable " + ENV_APP_ID + ", or pass a LlmClient via"
                     + " Config.llm(...)");
         }
+        if (config.baseUrl() == null || config.baseUrl().trim().isEmpty()) {
+            throw new IllegalStateException("missing LLM gateway: set environment"
+                    + " variable " + ENV_BASE_URL + " or --base-url, or pass a"
+                    + " LlmClient via Config.llm(...)");
+        }
         return new OpenAiLlmClient(config.baseUrl(), config.appId(), config.model(), true, 0);
     }
 
@@ -755,7 +759,8 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --max-steps <n>   单次对话的模型轮数上限，默认 8");
         System.out.println("  --max-sessions <n> 内存会话数上限，默认 512");
         System.out.println("  --model <name>    模型名，默认 " + DEFAULT_MODEL);
-        System.out.println("  --base-url <url>  OpenAI 兼容网关，默认 " + DEFAULT_BASE_URL);
+        System.out.println("  --base-url <url>  OpenAI 兼容网关地址（无默认值；需设置环境变量 "
+                + ENV_BASE_URL + " 或本参数）");
         System.out.println("  --allow-write     放行文件写入（默认为只读：写操作被拒绝）");
         System.out.println("  --allow-host <h>  允许模型访问的主机，可重复（如 api.example.com、"
                 + "*.corp.com；'*' = 放行全部主机，仅建议本地调试）；不写则不装配 http 工具");
@@ -773,7 +778,7 @@ public final class AgentServer implements AutoCloseable {
     // ---------- 配置 ----------
 
     /**
-     * 服务配置。全部字段有可用默认值，链式设置。
+     * 服务配置。除 appId 与 baseUrl 需显式提供外，其余字段有可用默认值，链式设置。
      *
      * <p>命令行入口用 {@link #parse(String[])} 组装；宿主直接 new 后按需设置。
      */
@@ -789,7 +794,7 @@ public final class AgentServer implements AutoCloseable {
 
         private String appId;
 
-        private String baseUrl = DEFAULT_BASE_URL;
+        private String baseUrl;
 
         private String model = DEFAULT_MODEL;
 
@@ -831,7 +836,7 @@ public final class AgentServer implements AutoCloseable {
         public static Config parse(String[] args) {
             Config config = new Config();
             config.appId = env(ENV_APP_ID, null);
-            config.baseUrl = env(ENV_BASE_URL, DEFAULT_BASE_URL);
+            config.baseUrl = env(ENV_BASE_URL, null);
             config.model = env(ENV_MODEL, DEFAULT_MODEL);
             final List<String> allowedHosts = new ArrayList<String>();
             for (int i = 0; i < args.length; i++) {

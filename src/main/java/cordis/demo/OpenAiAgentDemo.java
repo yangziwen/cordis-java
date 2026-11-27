@@ -34,7 +34,8 @@ import cordis.util.Maps;
  * 工具调用聚合 → 本地工具真的被调用。
  *
  * <pre>
- *   MT_AIGC_APP_ID=xxx MT_AIGC_MODEL=LongCat-Flash-Chat \
+ *   CORDIS_JAVA_APP_ID=xxx CORDIS_JAVA_BASE_URL=<OpenAI 兼容网关地址> \
+ *   CORDIS_JAVA_MODEL=glm-5.3 \
  *     java -cp target/classes:$(cat /tmp/cp.txt) cordis.demo.OpenAiAgentDemo
  * </pre>
  *
@@ -53,9 +54,7 @@ import cordis.util.Maps;
  */
 public final class OpenAiAgentDemo {
 
-    private static final String DEFAULT_BASE_URL = "https://aigc.sankuai.com/v1/openai/native";
-
-    private static final String DEFAULT_MODEL = "LongCat-Flash-Chat";
+    private static final String DEFAULT_MODEL = "glm-5.3";
 
     private static final String SYSTEM_PROMPT =
             "你可以调用本地只读工具。凡涉及文件内容的问题必须真的调用工具，"
@@ -67,14 +66,19 @@ public final class OpenAiAgentDemo {
     }
 
     public static void main(String[] args) throws Exception {
-        final String appId = env("MT_AIGC_APP_ID", null);
+        final String appId = env("CORDIS_JAVA_APP_ID", null);
         if (appId == null) {
-            System.out.println("缺少环境变量 MT_AIGC_APP_ID（Friday 个人租户 AppId）");
-            System.out.println("  MT_AIGC_APP_ID=xxx java -cp ... cordis.demo.OpenAiAgentDemo");
+            System.out.println("缺少环境变量 CORDIS_JAVA_APP_ID（Friday 个人租户 AppId）");
+            System.out.println("  CORDIS_JAVA_APP_ID=xxx java -cp ... cordis.demo.OpenAiAgentDemo");
             return;
         }
-        final String baseUrl = env("MT_AIGC_BASE_URL", DEFAULT_BASE_URL);
-        final String model = env("MT_AIGC_MODEL", DEFAULT_MODEL);
+        final String baseUrl = env("CORDIS_JAVA_BASE_URL", null);
+        if (baseUrl == null) {
+            System.out.println("缺少环境变量 CORDIS_JAVA_BASE_URL（OpenAI 兼容网关地址）");
+            System.out.println("  CORDIS_JAVA_BASE_URL=<url> java -cp ... cordis.demo.OpenAiAgentDemo");
+            return;
+        }
+        final String model = env("CORDIS_JAVA_MODEL", DEFAULT_MODEL);
         final String target = new File(args.length > 0 ? args[0] : "src/main/java/cordis/agent")
                 .getAbsolutePath();
 

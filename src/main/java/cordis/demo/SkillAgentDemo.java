@@ -45,17 +45,15 @@ import cordis.util.Maps;
  *       认出 release-notes 技能并加载。</li>
  * </ol>
  *
- * <p>section 3 需要 {@code MT_AIGC_APP_ID}（同 OpenAiAgentDemo），没设置就
- * 跳过；前两个 section 永远执行，可进回归。
+ * <p>section 3 需要 {@code CORDIS_JAVA_APP_ID} 和 {@code CORDIS_JAVA_BASE_URL}（同
+ * OpenAiAgentDemo），没设置就跳过；前两个 section 永远执行，可进回归。
  *
  * <p>skill 正文规模的真实数据（本机 48 个 SKILL.md 实测）：最小 1.7KB、
  * 中位 14.5KB、最大 97KB——所以正文必须按窗口续读，不能一次性全量回填。
  */
 public final class SkillAgentDemo {
 
-    private static final String DEFAULT_BASE_URL = "https://aigc.sankuai.com/v1/openai/native";
-
-    private static final String DEFAULT_MODEL = "LongCat-Flash-Chat";
+    private static final String DEFAULT_MODEL = "glm-5.3";
 
     /** section 2/3 共用的 system 基底：告诉模型清单在哪、该怎么用 */
     private static final String BASE_SYSTEM =
@@ -96,13 +94,14 @@ public final class SkillAgentDemo {
             System.exit(1);
         }
 
-        String appId = env("MT_AIGC_APP_ID", null);
-        if (appId == null) {
-            System.out.println("跳过模型部分：缺少 MT_AIGC_APP_ID（离线断言已全部通过）");
+        String appId = env("CORDIS_JAVA_APP_ID", null);
+        String baseUrl = env("CORDIS_JAVA_BASE_URL", null);
+        if (appId == null || baseUrl == null) {
+            System.out.println("跳过模型部分：缺少 CORDIS_JAVA_APP_ID / CORDIS_JAVA_BASE_URL"
+                    + "（离线断言已全部通过）");
             return;
         }
-        sectionModel(appId, env("MT_AIGC_BASE_URL", DEFAULT_BASE_URL),
-                env("MT_AIGC_MODEL", DEFAULT_MODEL));
+        sectionModel(appId, baseUrl, env("CORDIS_JAVA_MODEL", DEFAULT_MODEL));
     }
 
     // ---------- 1. 能力层：扫描 / 清单 / 窗口 ----------

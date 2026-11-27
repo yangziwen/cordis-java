@@ -463,7 +463,8 @@ public final class AgentServerDemo {
                 return LlmReply.toolCall("call_sleep", "sleep", "{\"ms\":400}");
             }
             return LlmReply.answer("（离线模式）我收到了：" + message
-                    + "。设置 " + AgentServer.ENV_APP_ID + " 后可接入真实模型。");
+                    + "。设置 " + AgentServer.ENV_APP_ID + " / " + AgentServer.ENV_BASE_URL
+                    + " 后可接入真实模型。");
         }
 
         private static boolean hasTool(List<Tool> tools, String name) {

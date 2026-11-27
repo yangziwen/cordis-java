@@ -36,14 +36,12 @@ import cordis.util.Maps;
  *       再读回确认——「能改代码」这件事第一次闭环。</li>
  * </ol>
  *
- * <p>section 3 需要 {@code MT_AIGC_APP_ID}（同 OpenAiAgentDemo），没设置就
- * 跳过；前两个 section 永远执行，可进回归。
+ * <p>section 3 需要 {@code CORDIS_JAVA_APP_ID} 和 {@code CORDIS_JAVA_BASE_URL}（同
+ * OpenAiAgentDemo），没设置就跳过；前两个 section 永远执行，可进回归。
  */
 public final class FsAgentDemo {
 
-    private static final String DEFAULT_BASE_URL = "https://aigc.sankuai.com/v1/openai/native";
-
-    private static final String DEFAULT_MODEL = "LongCat-Flash-Chat";
+    private static final String DEFAULT_MODEL = "glm-5.3";
 
     private static final String SYSTEM_PROMPT =
             "你可以读写工作区里的文件。改文件前先读原文；用 edit_file 时 oldText 必须"
@@ -66,13 +64,14 @@ public final class FsAgentDemo {
             System.exit(1);
         }
 
-        String appId = env("MT_AIGC_APP_ID", null);
-        if (appId == null) {
-            System.out.println("跳过模型部分：缺少 MT_AIGC_APP_ID（离线断言已全部通过）");
+        String appId = env("CORDIS_JAVA_APP_ID", null);
+        String baseUrl = env("CORDIS_JAVA_BASE_URL", null);
+        if (appId == null || baseUrl == null) {
+            System.out.println("跳过模型部分：缺少 CORDIS_JAVA_APP_ID / CORDIS_JAVA_BASE_URL"
+                    + "（离线断言已全部通过）");
             return;
         }
-        sectionModel(appId, env("MT_AIGC_BASE_URL", DEFAULT_BASE_URL),
-                env("MT_AIGC_MODEL", DEFAULT_MODEL));
+        sectionModel(appId, baseUrl, env("CORDIS_JAVA_MODEL", DEFAULT_MODEL));
     }
 
     // ---------- 1. 能力层安全断言 ----------

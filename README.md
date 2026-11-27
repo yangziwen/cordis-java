@@ -86,9 +86,9 @@ java -cp "$CP" cordis.demo.LifecycleDemo
 凭证仅从环境变量读取（公司 AIGC 网关，OpenAI 兼容）：
 
 ```bash
-export MT_AIGC_APP_ID=<AppId>          # 必填
-export MT_AIGC_MODEL=LongCat-Flash-Chat # 可选
-# export MT_AIGC_BASE_URL=...            # 可选，默认 https://aigc.sankuai.com/v1/openai/native
+export CORDIS_JAVA_APP_ID=<AppId>          # 必填
+export CORDIS_JAVA_BASE_URL=https://aigc.sankuai.com/v1/openai/native  # 必填
+export CORDIS_JAVA_MODEL=glm-5.3          # 可选
 
 java -cp "$CP" cordis.app.AgentServer --port 8787 --root ~/agent-ws --allow-write
 ```
@@ -457,7 +457,8 @@ root.registry.use(SkillTools.INSTANCE, Maps.of(),
 ### 启动
 
 ```bash
-export MT_AIGC_APP_ID=<AppId>
+export CORDIS_JAVA_APP_ID=<AppId>
+export CORDIS_JAVA_BASE_URL=<OpenAI 兼容网关地址>
 java -cp "$CP" cordis.app.AgentServer [选项]
 ```
 
@@ -581,12 +582,12 @@ done
 | `AgentDemo` | 脚本 LLM 打通 loop、工具热插拔、取消、流式分片聚合 |
 | `MemoryDemo` | 对话落库、业务插件重装后历史仍在、`tool_calls` 往返无损 |
 | `AgentHardeningDemo` | 工具异常回填合法 JSON、轮次事务、残缺配对自修复 |
-| `FsAgentDemo` | 沙箱/审批/大小上限 + 真实模型「读取 → 修改 → 再读取」（section 3 在缺少 `MT_AIGC_APP_ID` 时自动跳过） |
+| `FsAgentDemo` | 沙箱/审批/大小上限 + 真实模型「读取 → 修改 → 再读取」（section 3 在缺少 `CORDIS_JAVA_APP_ID` 时自动跳过） |
 | `SkillAgentDemo` | 扫描、清单、窗口续读 + 「清单 → 选择 → 加载正文 → 读资源」（section 3 同样自动跳过） |
 | `AgentServerDemo` | `/health` 三态、流式与双会话并发的事件隔离、浏览器工具装配四态（5+3+4 条） |
 | `HttpToolDemo` | 13 条断言，覆盖白名单、`*` 全开、重定向逐跳、截断、二进制、POST 回显、热插拔 |
 | `BrowserToolDemo` | 13 条断言，覆盖本地表单页 open→ref→type→click→读取 JS 执行结果、异步等待、截图、`file://` 与白名单拒绝、多页隔离 |
-| `OpenAiAgentDemo` | 真实模型（需 `MT_AIGC_APP_ID`）：多步 loop、流式与非流式结果一致性校验 |
+| `OpenAiAgentDemo` | 真实模型（需 `CORDIS_JAVA_APP_ID`）：多步 loop、流式与非流式结果一致性校验 |
 
 实测数据：Playwright 首次 `create` 8875ms、`launch` 3674~4302ms、`navigate` 913~4095ms；`PLAYWRIGHT_BROWSERS_PATH` 为空时 `channel=chrome` 仍可正常使用（Chrome 158）。
 
