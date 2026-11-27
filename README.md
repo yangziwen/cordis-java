@@ -105,7 +105,7 @@ java -cp "$CP" cordis.app.AgentServer --port 8787 --root ~/agent-ws --allow-writ
 
 在另一个终端启动客户端：
 
-```bash
+```bash 
 java -jar target/cordis-java-1.0.0-SNAPSHOT.jar cli   # 默认使用 SSE，逐轮输出
 # 或 classpath 方式：
 java -cp "$CP" cordis.app.AgentCli
@@ -485,7 +485,8 @@ java -cp "$CP" cordis.app.AgentServer [选项]
 | `--enable-browser` | 关闭 | 装配 8 个 `browser_*` 工具；导航策略复用 `--allow-host` |
 | `--browser-channel` | `chrome` | 使用系统 Chrome；置空则使用 Playwright 自带二进制 |
 | `--browser-headful` | 无头模式 | 以有界面模式启动，便于观察 |
-| `--max-steps` `--max-sessions` `--model` `--base-url` | — | 见 `--help` |
+| `--max-steps` | 32 | 单次对话的模型轮数上限；打满后**强制收尾**——不带工具清单再问一次出总结，`stopReason` 仍为 `MAX_STEPS` |
+| `--max-sessions` `--model` `--base-url` | — | 见 `--help` |
 
 ### 会话记忆（SQLite 持久化）
 

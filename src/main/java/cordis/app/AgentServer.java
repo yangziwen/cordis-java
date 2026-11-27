@@ -480,17 +480,19 @@ public final class AgentServer implements AutoCloseable {
      * 把本轮新增的消息全文落库（含工具过程，MemoryService 据消息形态打 qa 标），
      * 随后把内存历史收敛为问答主干——与重启后从库加载的视图一致，下一轮发给
      * 模型的历史不再携带工具过程。在会话锁内调用：同一会话的写入串行。
-     * 失败只记日志——答案已给用户，不应因存储故障砸掉整次响应。
+     * 落库失败只记日志——答案已给用户，不应因存储故障砸掉整次响应；但收敛
+     * 无条件执行：即便写库失败，内存视图也不能留着工具过程行等下一轮重发。
      */
     private void persist(String session, List<LlmMessage> history, int before) {
+        List<LlmMessage> produced = new ArrayList<>(history.subList(before, history.size()));
         try {
-            List<LlmMessage> produced = new ArrayList<>(history.subList(before, history.size()));
             if (!produced.isEmpty()) {
                 memory.appendAllSync(session, produced);
             }
-            trimToQa(history);
         } catch (RuntimeException e) {
             LOG.warn("persist failed, session={}", session, e);
+        } finally {
+            trimToQa(history);
         }
     }
 
@@ -873,7 +875,8 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --bind <host>     绑定地址，默认 " + DEFAULT_HOST);
         System.out.println("  --root <dir>      工作区目录，默认 ./agent-workspace");
         System.out.println("  --skills <dir>    技能目录，默认 <root>/skills");
-        System.out.println("  --max-steps <n>   单次对话的模型轮数上限，默认 8");
+        System.out.println("  --max-steps <n>   单次对话的模型轮数上限，默认 32"
+                + "（打满后强制收尾：不带工具再问一次出总结）");
         System.out.println("  --max-sessions <n> 内存会话缓存上限，默认 512"
                 + "（历史持久化在 <root>/memory.db，缓存清空不丢数据）");
         System.out.println("  --model <name>    模型名，默认 " + DEFAULT_MODEL);
@@ -916,7 +919,7 @@ public final class AgentServer implements AutoCloseable {
 
         private String model = DEFAULT_MODEL;
 
-        private int maxSteps = 8;
+        private int maxSteps = 32;
 
         private int maxSessions = 512;
 

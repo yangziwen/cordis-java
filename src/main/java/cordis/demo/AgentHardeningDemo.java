@@ -46,7 +46,7 @@ import cordis.util.Maps;
  *   <li>{@code finish_reason=length / content_filter} 必须变成 IOException，
  *       不能把半截答案当终答；</li>
  *   <li>打满 maxSteps 用 {@link AgentResult.StopReason#MAX_STEPS} 表达，
- *       不再把框架的话拼成答案；</li>
+ *       且强制收尾出总结（不带工具清单再问一次），不把框架的话拼成答案；</li>
  *   <li>同一轮的多个工具并发执行，总耗时≈最慢的一个，回填顺序仍按请求顺序。</li>
  * </ol>
  *
@@ -311,17 +311,21 @@ public final class AgentHardeningDemo {
     // ---------- 4. maxSteps ----------
 
     private static void sectionMaxSteps(Checks checks) throws Exception {
-        System.out.println("== 4. 打满 maxSteps：stopReason=MAX_STEPS，不再伪装成答案 ==");
+        System.out.println("== 4. 打满 maxSteps：强制收尾（不带工具清单再问一次） ==");
         Run run = runAgent(new LoopLlm(), 3, "一直算下去", new EchoTool());
         checks.check("stopReason = MAX_STEPS",
                 run.result.stopReason == AgentResult.StopReason.MAX_STEPS,
                 "实际 " + run.result.stopReason);
-        checks.check("steps 与 toolCalls 都等于 maxSteps",
+        checks.check("steps 与 toolCalls 都等于 maxSteps（收尾调用不计数）",
                 run.result.steps == 3 && run.result.toolCalls == 3,
                 "steps=" + run.result.steps + " toolCalls=" + run.result.toolCalls);
-        checks.check("completed() = false，answer 为空而不是\"框架的抱怨\"",
-                !run.result.completed() && run.result.answer.isEmpty(),
+        checks.check("answer 是强制收尾的总结而非空串或\"框架的抱怨\"",
+                !run.result.completed() && LoopLlm.FORCED_SUMMARY.equals(run.result.answer),
                 "实际 " + run.result);
+        checks.check("收尾的 assistant 文本进了历史（且不带 tool_calls）",
+                "assistant".equals(run.history.get(run.history.size() - 1).role)
+                        && run.history.get(run.history.size() - 1).toolCalls.isEmpty(),
+                "末条 " + run.history.get(run.history.size() - 1));
         System.out.println("   toString: " + run.result);
         System.out.println();
     }
@@ -461,11 +465,16 @@ public final class AgentHardeningDemo {
 
     }
 
-    /** 永远请求工具：用来撞 maxSteps */
+    /** 工具清单非空时永远请求工具（撞 maxSteps）；清单为空（强制收尾）给固定总结 */
     private static final class LoopLlm implements LlmClient {
+
+        static final String FORCED_SUMMARY = "循环被截断，这是基于已有结果的总结";
 
         @Override
         public LlmReply chat(List<LlmMessage> history, List<Tool> tools, String systemPrompt) {
+            if (tools.isEmpty()) {
+                return LlmReply.answer(FORCED_SUMMARY);
+            }
             return LlmReply.toolCall("call_" + history.size(), "echo", "{}");
         }
 

@@ -8,8 +8,10 @@ package cordis.agent;
  *
  * <ul>
  *   <li>{@link StopReason#ANSWERED}：模型不再请求工具，{@link #answer} 是终答；</li>
- *   <li>{@link StopReason#MAX_STEPS}：打满轮数上限，模型还想继续调工具，
- *       此时 {@link #answer} 通常是空串，任务<b>没有完成</b>。</li>
+ *   <li>{@link StopReason#MAX_STEPS}：打满轮数上限，模型还想继续调工具；
+ *       框架随即强制收尾（不带工具清单再问一次），{@link #answer} 是模型
+ *       基于已有工具结果给出的总结——收尾调用失败时退回空串。任务
+ *       <b>没有完成</b>，调用方仍应视作截断。</li>
  * </ul>
  *
  * <p>早先的实现把后者拼成一句 {@code "(max steps reached: N)"} 当正常答案
@@ -31,7 +33,7 @@ public final class AgentResult {
 
     }
 
-    /** 终答文本；{@link StopReason#MAX_STEPS} 时通常为空串 */
+    /** 终答文本；{@link StopReason#MAX_STEPS} 时是强制收尾的总结（收尾失败为空串） */
     public final String answer;
 
     public final StopReason stopReason;

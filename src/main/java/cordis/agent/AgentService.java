@@ -1,6 +1,7 @@
 package cordis.agent;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
@@ -10,6 +11,9 @@ import java.util.concurrent.Future;
 
 import cordis.core.Context;
 import cordis.core.Service;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * agent loop 本体（服务名 {@code agent}）。
@@ -22,6 +26,7 @@ import cordis.core.Service;
  *          工具快照 → llm.chat(历史, 快照)
  *            ├─ 无 toolCalls → emit(reply) → AgentResult(ANSWERED)
  *            └─ 并发执行本轮全部工具 → 结果回填历史 → 下一轮
+ *     └─ 打满 maxSteps → 无工具清单再问一次（强制收尾）→ AgentResult(MAX_STEPS, 总结)
  * </pre>
  *
  * <h3>线程模型（本类最重要的设计约束）</h3>
@@ -71,9 +76,14 @@ import cordis.core.Service;
  *
  * <p>返回 {@link AgentResult}，{@code stopReason} 区分"答完了"和"打满轮数"。
  * 早先的实现把后者拼成 {@code "(max steps reached: N)"} 当正常答案返回，
- * 调用方分不清是模型说的还是框架说的。
+ * 调用方分不清是模型说的还是框架说的。打满轮数时先<b>强制收尾</b>：不带
+ * 工具清单再问一次（payload 里没有 tools 字段，模型无工具可调），只能基于
+ * 已回填的工具结果给文字总结；stopReason 仍是 MAX_STEPS，answer 即总结文本
+ * （收尾调用失败退回空答案）。
  */
 public class AgentService extends Service {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AgentService.class);
 
     public static final String EVT_STEP = "agent/step";
 
@@ -194,7 +204,31 @@ public class AgentService extends Service {
                 notifyToolResult(observer, request.name, result);
             }
         }
-        return new AgentResult("", AgentResult.StopReason.MAX_STEPS, maxSteps, toolCallCount);
+        // 打满轮数：强制收尾——不带工具清单再问一次，模型没有工具可调，
+        // 只能基于已回填的工具结果给文字总结（各家 agent 框架的通行做法）。
+        // 收尾调用不计入 steps：工具循环本身只跑了 maxSteps 轮。
+        if (call.isCancelled()) {
+            throw new CancellationException("agent run cancelled");
+        }
+        try {
+            LlmReply forced = llm.chat(history, Collections.<Tool>emptyList(),
+                    system == null ? null : system.provide());
+            // 不给工具时个别模型仍可能回 tool_calls：忽略调用只取文本，
+            // 否则 dangling tool_calls 会把历史弄成非法的配对
+            String content = forced.content == null ? "" : forced.content;
+            history.add(LlmMessage.assistant(LlmReply.answer(content)));
+            ctx.events.emit(EVT_REPLY, content);
+            notifyReply(observer, content);
+            return new AgentResult(content, AgentResult.StopReason.MAX_STEPS,
+                    maxSteps, toolCallCount);
+        } catch (CancellationException e) {
+            throw e;
+        } catch (Exception e) {
+            // 收尾失败不推翻整次 run——工具结果都已在历史里，退回空答案
+            LOG.warn("forced summary failed after max steps, returning empty answer", e);
+            return new AgentResult("", AgentResult.StopReason.MAX_STEPS,
+                    maxSteps, toolCallCount);
+        }
     }
 
     // ---------- 监听器回调（异常不外泄） ----------
