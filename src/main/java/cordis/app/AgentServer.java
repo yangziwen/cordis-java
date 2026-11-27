@@ -33,6 +33,8 @@ import cordis.agent.AgentResult;
 import cordis.agent.AgentService;
 import cordis.agent.LlmClient;
 import cordis.agent.LlmMessage;
+import cordis.agent.MemoryPlugin;
+import cordis.agent.MemoryService;
 import cordis.agent.SystemProvider;
 import cordis.agent.Tool;
 import cordis.agent.ToolComponent;
@@ -53,6 +55,7 @@ import cordis.http.HttpAccessPolicy;
 import cordis.http.HttpPlugin;
 import cordis.skill.SkillPlugin;
 import cordis.skill.SkillService;
+import cordis.sqlite.SqlitePlugin;
 import cordis.util.Maps;
 
 /**
@@ -73,14 +76,24 @@ import cordis.util.Maps;
  * <h3>接口</h3>
  *
  * <ul>
- *   <li>{@code GET /health} → 模型、可见工具、技能数、写入策略、会话数</li>
+ *   <li>{@code GET /health} → 模型、记忆文件、可见工具、技能数、写入策略、会话数</li>
  *   <li>{@code POST /chat} {"session":"可选","message":"...","stream":false} →
  *       {"session","answer","stopReason","steps","toolCalls","elapsedMs","events"}</li>
  *   <li>{@code POST /chat} 加 {@code "stream":true}（或请求头
  *       {@code Accept: text/event-stream}）→ 逐帧
  *       {@code data: {type:step|tool_start|tool|final|error,...}}</li>
- *   <li>{@code POST /reset} {"session":"..."} → 清空该会话历史</li>
+ *   <li>{@code POST /reset} {"session":"..."} → 删除该会话的库内历史与缓存</li>
  * </ul>
+ *
+ * <h3>记忆与重启延续</h3>
+ *
+ * <p>会话历史持久化在 {@code <root>/memory.db}（SQLite）。<b>会话由客户端传的
+ * session 字符串识别</b>：重启后传同一个 session id，/chat 会先从库里加载
+ * <b>问答主干</b>（qa=1：用户问题与模型终答）再接着跑；工具调用的原始过程
+ * （网页全文、文件内容）仍然全文落库存档，但<b>不随历史重发给模型</b>——
+ * 长会话每轮只重发问答主干，token 负担不随轮次滚雪球。不传 session 则新开
+ * 一个随机会话。内存 map 只是缓存（容量 {@code --max-sessions}，满了整体清空
+ * 后按需重读），服务重启/缓存清空都不丢历史。
  *
  * <h3>并发模型</h3>
  *
@@ -166,8 +179,18 @@ public final class AgentServer implements AutoCloseable {
 
     private final List<Fiber> fibers = new ArrayList<Fiber>();
 
+    /**
+     * 会话历史的内存缓存：真正发给模型的内容在 SQLite（{@code <root>/memory.db}）
+     * 的问答主干（qa=1）里，缓存 miss 时从库加载，写满时整体清空——数据不会丢，
+     * 重新按需加载即可。同一 session 的并发 chat 靠 synchronized(history) 串行。
+     */
     private final Map<String, List<LlmMessage>> sessions =
             new ConcurrentHashMap<String, List<LlmMessage>>();
+
+    private final Object sessionsLock = new Object();
+
+    /** 会话记忆服务；start() 成功后非空 */
+    private MemoryService memory;
 
     private final CountDownLatch stopped = new CountDownLatch(1);
 
@@ -216,6 +239,14 @@ public final class AgentServer implements AutoCloseable {
                     null).await().join());
             fibers.add(ctx.registry.use(SkillPlugin.INSTANCE,
                     Maps.of("root", skillsDir.toString()), null).await().join());
+            // 记忆落地：SQLite 文件在 <root>/memory.db，重启后同一 session
+            // id 的历史可恢复（会话识别靠客户端传的 session 字符串）
+            fibers.add(ctx.registry.use(SqlitePlugin.INSTANCE,
+                    Maps.of("url", "jdbc:sqlite:" + root.resolve("memory.db")), null)
+                    .await().join());
+            fibers.add(ctx.registry.use(MemoryPlugin.INSTANCE,
+                    Maps.of(), Maps.of("sqlite", true)).await().join());
+            memory = ctx.get("memory");
             final SystemProvider system = () -> {
                 SkillService current = ctx.get("skills");
                 String section = current == null ? "" : current.systemSection();
@@ -322,6 +353,8 @@ public final class AgentServer implements AutoCloseable {
             body.put("status", "ok");
             body.put("model", config.modelName());
             body.put("root", config.root().toAbsolutePath().toString());
+            body.put("memory", memory == null ? "disabled"
+                    : config.root().toAbsolutePath().resolve("memory.db").toString());
             body.put("skills", skillCount());
             body.put("sessions", sessions.size());
             body.put("write", config.approval() != null ? "custom"
@@ -368,11 +401,6 @@ public final class AgentServer implements AutoCloseable {
                 session = UUID.randomUUID().toString().substring(0, 8);
             }
             List<LlmMessage> history = session(session);
-            if (history == null) {
-                writeError(exchange, 503, "too many sessions (maxSessions="
-                        + config.maxSessions() + ")");
-                return;
-            }
             boolean stream = request.path("stream").asBoolean(false)
                     || acceptsEventStream(exchange);
             if (stream) {
@@ -395,7 +423,14 @@ public final class AgentServer implements AutoCloseable {
         try {
             JsonNode request = JSON.readTree(readBody(exchange));
             String session = text(request, "session");
-            boolean cleared = !session.isEmpty() && sessions.remove(session) != null;
+            boolean cleared = false;
+            if (!session.isEmpty()) {
+                synchronized (sessionsLock) {
+                    sessions.remove(session);
+                }
+                cleared = !memory.loadSync(session).isEmpty();
+                memory.deleteSync(session);
+            }
             ObjectNode body = JSON.createObjectNode();
             body.put("session", session);
             body.put("cleared", cleared);
@@ -403,6 +438,38 @@ public final class AgentServer implements AutoCloseable {
         } catch (Exception e) {
             LOG.warn("reset failed", e);
             writeError(exchange, 500, messageOf(e));
+        }
+    }
+
+    /**
+     * 把本轮新增的消息全文落库（含工具过程，MemoryService 据消息形态打 qa 标），
+     * 随后把内存历史收敛为问答主干——与重启后从库加载的视图一致，下一轮发给
+     * 模型的历史不再携带工具过程。在会话锁内调用：同一会话的写入串行。
+     * 失败只记日志——答案已给用户，不应因存储故障砸掉整次响应。
+     */
+    private void persist(String session, List<LlmMessage> history, int before) {
+        try {
+            List<LlmMessage> produced = new ArrayList<>(history.subList(before, history.size()));
+            if (!produced.isEmpty()) {
+                memory.appendAllSync(session, produced);
+            }
+            trimToQa(history);
+        } catch (RuntimeException e) {
+            LOG.warn("persist failed, session={}", session, e);
+        }
+    }
+
+    /** 收敛为问答主干（user 问题 + assistant 终答）；工具过程行从内存视图中移除 */
+    private static void trimToQa(List<LlmMessage> history) {
+        List<LlmMessage> qa = new ArrayList<>();
+        for (LlmMessage message : history) {
+            if (MemoryService.isQa(message)) {
+                qa.add(message);
+            }
+        }
+        if (qa.size() != history.size()) {
+            history.clear();
+            history.addAll(qa);
         }
     }
 
@@ -415,8 +482,10 @@ public final class AgentServer implements AutoCloseable {
         final long start = System.currentTimeMillis();
         AgentResult result;
         synchronized (history) {
+            final int before = history.size();
             result = agent().run(history, message, collector(collected))
                     .completion().join();
+            persist(session, history, before);
         }
         ObjectNode body = JSON.createObjectNode();
         body.put("session", session);
@@ -466,7 +535,9 @@ public final class AgentServer implements AutoCloseable {
             };
             AgentResult result;
             synchronized (history) {
+                final int before = history.size();
                 result = agent().run(history, message, listener).completion().join();
+                persist(session, history, before);
             }
             Map<String, Object> finalEvent = event("final");
             finalEvent.put("session", session);
@@ -585,16 +656,24 @@ public final class AgentServer implements AutoCloseable {
         return new OpenAiLlmClient(config.baseUrl(), config.appId(), config.model(), true, 0);
     }
 
-    /** 会话历史；超过容量上限返回 null（调用方回 503） */
+    /**
+     * 会话历史：优先命中内存缓存，miss 时从 SQLite 加载问答主干
+     * （qa=1：用户问题与模型终答；工具过程只存档，不重发给模型）
+     */
     private List<LlmMessage> session(String id) {
-        List<LlmMessage> history = sessions.get(id);
-        if (history != null) {
+        synchronized (sessionsLock) {
+            List<LlmMessage> cached = sessions.get(id);
+            if (cached != null) {
+                return cached;
+            }
+            if (sessions.size() >= config.maxSessions()) {
+                // 缓存上限：历史真正在库里，整体清空只影响下次访问多一次 DB 读
+                sessions.clear();
+            }
+            List<LlmMessage> history = memory.loadQaSync(id);
+            sessions.put(id, history);
             return history;
         }
-        if (sessions.size() >= config.maxSessions()) {
-            return null;
-        }
-        return sessions.computeIfAbsent(id, key -> new ArrayList<LlmMessage>());
     }
 
     // ---------- HTTP 工具 ----------
@@ -703,6 +782,9 @@ public final class AgentServer implements AutoCloseable {
                 + server.config.host() + ":" + server.port());
         System.out.println("[agent-server] workspace: "
                 + server.config.root().toAbsolutePath());
+        System.out.println("[agent-server] memory: "
+                + server.config.root().toAbsolutePath().resolve("memory.db")
+                + "（SQLite；问答主干跨重启可续接，工具过程只存档不重发）");
         System.out.println("[agent-server] model: " + server.config.modelName());
         System.out.println("[agent-server] write: "
                 + (server.config.approval() != null ? "custom gate"
@@ -757,7 +839,8 @@ public final class AgentServer implements AutoCloseable {
         System.out.println("  --root <dir>      工作区目录，默认 ./agent-workspace");
         System.out.println("  --skills <dir>    技能目录，默认 <root>/skills");
         System.out.println("  --max-steps <n>   单次对话的模型轮数上限，默认 8");
-        System.out.println("  --max-sessions <n> 内存会话数上限，默认 512");
+        System.out.println("  --max-sessions <n> 内存会话缓存上限，默认 512"
+                + "（历史持久化在 <root>/memory.db，缓存清空不丢数据）");
         System.out.println("  --model <name>    模型名，默认 " + DEFAULT_MODEL);
         System.out.println("  --base-url <url>  OpenAI 兼容网关地址（无默认值；需设置环境变量 "
                 + ENV_BASE_URL + " 或本参数）");

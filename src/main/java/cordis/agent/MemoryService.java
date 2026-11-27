@@ -22,11 +22,24 @@ import cordis.sqlite.SqliteService;
  *   sessions(id TEXT PK, created_at INTEGER, updated_at INTEGER)
  *   messages(id INTEGER PK AUTOINCREMENT, session_id TEXT, seq INTEGER,
  *            role TEXT, content TEXT, tool_calls TEXT, tool_call_id TEXT,
- *            created_at INTEGER, UNIQUE(session_id, seq))
+ *            qa INTEGER, created_at INTEGER, UNIQUE(session_id, seq))
  * </pre>
  *
  * <p>{@code tool_calls} 列存 {@link ToolCallCodec} 的转义分隔符格式——
  * SQLite 没有 JSON 类型，也不必为它引入 JSON 库。
+ *
+ * <h3>qa 列：问答主干 vs 工具过程</h3>
+ *
+ * <p>每行都全文落库（{@code content} 保留原始信息），但 {@code qa} 打了标记：
+ * 1 = 问答主干（user 问题、不带工具调用的 assistant 终答）；0 = 工具过程
+ * （带 {@code tool_calls} 的 assistant、tool 结果）。两种读法：
+ *
+ * <ul>
+ *   <li>{@code load} —— 全量（档案视图，含工具过程）；</li>
+ *   <li>{@code loadQa} —— 只取主干行。{@code AgentServer} 用它组装发给模型的
+ *       历史：长会话只重发问答主干，工具返回的原始网页/文件内容不再每轮重发，
+ *       token 负担不随轮次滚雪球；过程原文仍在库里，需要时可查。</li>
+ * </ul>
  *
  * <h3>seq 的原子分配与写入事务</h3>
  *
@@ -66,6 +79,7 @@ public class MemoryService extends Service {
                     + "content TEXT NOT NULL, "
                     + "tool_calls TEXT, "
                     + "tool_call_id TEXT, "
+                    + "qa INTEGER NOT NULL DEFAULT 0, "
                     + "created_at INTEGER NOT NULL, "
                     + "UNIQUE(session_id, seq))";
 
@@ -73,11 +87,18 @@ public class MemoryService extends Service {
             "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq)";
 
     private static final String INSERT_MESSAGE =
-            "INSERT INTO messages (session_id, seq, role, content, tool_calls, tool_call_id, created_at) "
-                    + "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ? "
+            "INSERT INTO messages (session_id, seq, role, content, tool_calls, tool_call_id, qa, created_at) "
+                    + "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ? "
                     + "FROM messages WHERE session_id = ?";
 
     private final SqliteService db;
+
+    /**
+     * 写操作互斥锁：底层是一条共享 JDBC 连接，transaction() 不支持并发
+     * （两个事务在 auto-commit 开关上交错，后提交的会被打成
+     * "database in auto-commit mode"），所以所有写路径在服务内排队执行。
+     */
+    private final Object writeLock = new Object();
 
     public MemoryService(Context ctx, SqliteService db) {
         super(ctx, "memory");
@@ -88,7 +109,8 @@ public class MemoryService extends Service {
      * 建表；由插件在扩展池上调用一次（幂等，IF NOT EXISTS）。
      *
      * <p>放在插件里而不是本类构造器里：Service 构造必须在主循环执行，
-     * 而 DDL 是阻塞 JDBC，两者不能共存于同一个线程。
+     * 而 DDL 是阻塞 JDBC，两者不能共存于同一个线程。表结构有变就直接
+     * 删掉旧库文件重建，不做 ALTER 迁移。
      */
     public static void createSchema(SqliteService db) {
         db.execute(DDL_SESSIONS);
@@ -98,7 +120,7 @@ public class MemoryService extends Service {
 
     // ---------- 读 ----------
 
-    /** 读取会话的全部消息，按 seq 升序；不存在返回空列表 */
+    /** 读取会话的全部消息（含工具过程，档案视图），按 seq 升序；不存在返回空列表 */
     public Promise<List<LlmMessage>> load(final String sessionId) {
         return ctx.scheduler.offload(() -> loadSync(sessionId));
     }
@@ -191,6 +213,33 @@ public class MemoryService extends Service {
         return list;
     }
 
+    /** 读取会话的问答主干（qa=1：用户问题 + 模型终答），按 seq 升序 */
+    public Promise<List<LlmMessage>> loadQa(final String sessionId) {
+        return ctx.scheduler.offload(() -> loadQaSync(sessionId));
+    }
+
+    /**
+     * 问答主干视图——{@code AgentServer} 用它组装发给模型的历史：
+     * 工具调用的原始过程留在库里（content 全文），不再每轮重发。
+     * 主干行天然不带 tool_calls，无需尾部修复。
+     */
+    public List<LlmMessage> loadQaSync(String sessionId) {
+        assertNotMainLoop("MemoryService.loadQaSync");
+        requireSessionId(sessionId);
+        List<Map<String, Object>> rows = db.query(
+                "SELECT role, content, tool_calls, tool_call_id FROM messages "
+                        + "WHERE session_id = ? AND qa = 1 ORDER BY seq", sessionId);
+        List<LlmMessage> history = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            history.add(LlmMessage.restore(
+                    (String) row.get("role"),
+                    (String) row.get("content"),
+                    ToolCallCodec.decode((String) row.get("tool_calls")),
+                    (String) row.get("tool_call_id")));
+        }
+        return history;
+    }
+
     // ---------- 写 ----------
 
     public Promise<Void> append(final String sessionId, final LlmMessage message) {
@@ -205,10 +254,10 @@ public class MemoryService extends Service {
     }
 
     /**
-     * 追加一批消息；会话不存在时自动创建。
+     * 追加一批消息（全文，含工具过程；qa 标由 {@link #isQa} 判定）；会话不存在时自动创建。
      *
-     * <p>seq 由数据库侧分配（见类注释），因此本方法的并发调用是安全的：
-     * 两个线程同时追加只会得到不同的 seq，不会互相覆盖。
+     * <p>seq 由数据库侧分配（见类注释）；并发调用在 {@link #writeLock} 上排队，
+     * 两个会话同时追加只会得到不同的 seq，不会互相覆盖。
      */
     public void appendAllSync(String sessionId, List<LlmMessage> messages) {
         assertNotMainLoop("MemoryService.appendAllSync");
@@ -219,21 +268,24 @@ public class MemoryService extends Service {
         final long now = System.currentTimeMillis();
         // 一轮对话的若干条消息必须同时可见：写一半留下的"assistant 声明了
         // tool_calls 却没有 tool 结果"会让下次 load 拿到一轮非法历史
-        db.transaction(() -> {
-            db.execute("INSERT OR IGNORE INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
-                    sessionId, now, now);
-            for (LlmMessage message : messages) {
-                db.execute(INSERT_MESSAGE,
-                        sessionId,
-                        message.role,
-                        message.content,
-                        ToolCallCodec.encode(message.toolCalls),
-                        message.toolCallId,
-                        now,
-                        sessionId);
-            }
-            db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", now, sessionId);
-        });
+        synchronized (writeLock) {
+            db.transaction(() -> {
+                db.execute("INSERT OR IGNORE INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
+                        sessionId, now, now);
+                for (LlmMessage message : messages) {
+                    db.execute(INSERT_MESSAGE,
+                            sessionId,
+                            message.role,
+                            message.content,
+                            ToolCallCodec.encode(message.toolCalls),
+                            message.toolCallId,
+                            isQa(message) ? 1 : 0,
+                            now,
+                            sessionId);
+                }
+                db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", now, sessionId);
+            });
+        }
     }
 
     /** 删除会话及其全部消息 */
@@ -247,11 +299,25 @@ public class MemoryService extends Service {
     public void deleteSync(String sessionId) {
         assertNotMainLoop("MemoryService.deleteSync");
         requireSessionId(sessionId);
-        db.execute("DELETE FROM messages WHERE session_id = ?", sessionId);
-        db.execute("DELETE FROM sessions WHERE id = ?", sessionId);
+        synchronized (writeLock) {
+            db.execute("DELETE FROM messages WHERE session_id = ?", sessionId);
+            db.execute("DELETE FROM sessions WHERE id = ?", sessionId);
+        }
     }
 
     // ---------- 内部 ----------
+
+    /**
+     * 一条消息是否属于问答主干：user 问题，或不含工具调用的 assistant 终答。
+     * 工具过程（带 tool_calls 的 assistant、tool 结果）不算——它们落库存档，
+     * 但不进入发给模型的历史。
+     */
+    public static boolean isQa(LlmMessage message) {
+        if ("user".equals(message.role)) {
+            return true;
+        }
+        return "assistant".equals(message.role) && message.toolCalls.isEmpty();
+    }
 
     private static void requireSessionId(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) {

@@ -475,14 +475,29 @@ java -cp "$CP" cordis.app.AgentServer [选项]
 | `--browser-headful` | 无头模式 | 以有界面模式启动，便于观察 |
 | `--max-steps` `--max-sessions` `--model` `--base-url` | — | 见 `--help` |
 
+### 会话记忆（SQLite 持久化）
+
+会话历史落在 **`<root>/memory.db`**（SQLite 文件），重启进程不丢。**会话由客户端传的
+`session` 字符串识别**：`/chat` 传同一个 session id 就接上同一段历史，与是否重启无关；
+不传 session 则新开随机会话。`--max-sessions` 只限制内存缓存条数，满了整体清空后
+按需重读，不影响持久化数据。`/reset` 同时删除库内历史与缓存。配套的
+`AgentCli --resume` 会读回上次保存的 session id（存在当前目录 `.agent-cli-session`），
+服务端重启后也能续上上回的对话。
+
+**发给模型的历史只含问答主干**：`messages` 表的 `qa` 列标记每行身份——`1` =
+用户问题与模型终答，`0` = 工具调用过程（带 `tool_calls` 的 assistant、tool 结果）。
+所有消息都**全文**落库（`content` 列存原始信息，含网页/文件原文），但每轮重发给
+模型的只有 `qa=1` 的问答主干——工具返回的大段原文不再反复计 token，长会话负担不随
+轮次滚雪球；过程原文仍留在库里，需要回溯时可查（`MemoryService.load` 读全量档案视图）。
+
 ### 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 模型、可见工具、技能数、写入策略、会话数、`http`/`httpScope`、`browser`/`browserScope`/`browserPages` |
+| GET | `/health` | 模型、记忆文件（`memory` 字段）、可见工具、技能数、写入策略、会话数、`http`/`httpScope`、`browser`/`browserScope`/`browserPages` |
 | POST | `/chat` | `{"session":"可选","message":"...","stream":false}` → `{"session","answer","stopReason","steps","toolCalls","elapsedMs","events"}` |
 | POST | `/chat` | 加 `"stream":true` 或 `Accept: text/event-stream` → 逐帧 `data: {"type":...}` |
-| POST | `/reset` | `{"session":"..."}` 清空该会话历史 |
+| POST | `/reset` | `{"session":"..."}` 删除该会话的库内历史与内存缓存 |
 
 SSE 帧类型：`step`（进入第 n 轮，带当前工具快照）、`tool_start`、`tool`（工具结果）、`final`、`error`。
 
@@ -493,10 +508,11 @@ SSE 帧类型：`step`（进入第 n 轮，带当前工具快照）、`tool_star
 ### AgentCli
 
 ```bash
-java -cp "$CP" cordis.app.AgentCli [url] [--no-stream] [--session id]
+java -cp "$CP" cordis.app.AgentCli [url] [--no-stream] [--session id] [--resume]
 ```
 
-默认读取 SSE 并逐帧输出；`--no-stream` 回退为一次性 JSON；内置 `/help` `/health` `/reset` `/exit`。
+默认读取 SSE 并逐帧输出；`--no-stream` 回退为一次性 JSON；`--session` 显式指定会话；
+`--resume` 续用上次保存的会话 id；内置 `/help` `/health` `/reset` `/exit`。
 
 ---
 

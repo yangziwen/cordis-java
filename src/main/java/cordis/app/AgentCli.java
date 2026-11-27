@@ -8,6 +8,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,13 +25,16 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentCli http://127.0.0.1:9000
  *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentCli --no-stream
  *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentCli --session my-job
+ *   java -cp target/classes:$(cat /tmp/cp.txt) cordis.app.AgentCli --resume
  * </pre>
  *
  * <p>默认走 SSE：服务端每发生一个过程事件就推一帧，客户端立刻打印——长工具
  * 调用时不会盯着一片空白等；{@code --no-stream} 退回一次性 JSON。
  *
- * <p>会话 id 默认由本进程生成；用 {@code --session} 指定固定值时，进程重开
- * 仍能接上服务端内存里的同一段历史（服务端不重启的前提下）。
+ * <p>会话 id 默认由本进程随机生成，并写入当前目录的 {@code .agent-cli-session}；
+ * 下次 {@code --resume} 读回同一个 id 接上同一段历史。服务端历史持久化在
+ * SQLite（{@code <root>/memory.db}），所以<b>服务端重启后同一 session id
+ * 依然能接上上回的对话</b>；{@code --session} 则每次显式指定。
  *
  * <p>内置命令：{@code /help}、{@code /health}、{@code /reset}、{@code /exit}。
  */
@@ -53,6 +59,7 @@ public final class AgentCli {
         String baseUrl = "http://" + AgentServer.DEFAULT_HOST + ":" + AgentServer.DEFAULT_PORT;
         String session = null;
         boolean stream = true;
+        boolean resume = false;
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             if ("--no-stream".equals(arg)) {
@@ -64,6 +71,8 @@ public final class AgentCli {
                     return;
                 }
                 session = args[++i];
+            } else if ("--resume".equals(arg)) {
+                resume = true;
             } else if ("--help".equals(arg) || "-h".equals(arg)) {
                 printUsage();
                 return;
@@ -75,13 +84,25 @@ public final class AgentCli {
                 return;
             }
         }
+        boolean resumed = false;
         if (session == null || session.trim().isEmpty()) {
-            session = "cli-" + Long.toHexString(System.nanoTime());
+            if (resume) {
+                String saved = readSessionFile();
+                if (saved != null && !saved.isEmpty()) {
+                    session = saved;
+                    resumed = true;
+                }
+            }
+            if (session == null || session.trim().isEmpty()) {
+                session = "cli-" + Long.toHexString(System.nanoTime());
+            }
         }
         AgentCli cli = new AgentCli(trimSlash(baseUrl), session.trim(), stream);
+        saveSessionFile(cli.session);
 
         System.out.println("agent cli → " + cli.baseUrl + "  (session " + cli.session
-                + (cli.stream ? ", stream" : ", json") + ")");
+                + (cli.stream ? ", stream" : ", json")
+                + (resumed ? ", 续接上次历史" : "") + ")");
         System.out.println("/help 看命令，/exit 退出");
         System.out.println();
 
@@ -133,8 +154,32 @@ public final class AgentCli {
         System.out.println("  服务地址                 默认 http://" + AgentServer.DEFAULT_HOST
                 + ":" + AgentServer.DEFAULT_PORT);
         System.out.println("  --session <id>           固定会话 id，默认本进程随机生成");
+        System.out.println("  --resume                  续用上次保存的会话 id（服务端历史在"
+                + " <root>/memory.db，服务端重启也能接上）");
         System.out.println("  --no-stream              一次性 JSON（默认走 SSE 流式）");
         System.out.println("  --help                   显示本帮助");
+    }
+
+    /** 当前目录的 .agent-cli-session 记着上次会话 id；读不到返回 null */
+    private static String readSessionFile() {
+        try {
+            Path file = Paths.get(".agent-cli-session");
+            if (Files.exists(file)) {
+                return new String(Files.readAllBytes(file), StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ignored) {
+            // 读不到就当没有
+        }
+        return null;
+    }
+
+    private static void saveSessionFile(String session) {
+        try {
+            Files.write(Paths.get(".agent-cli-session"),
+                    session.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+            // 只是个便利文件，写不进也不影响对话
+        }
     }
 
     /** 一轮对话：默认走 SSE，过程事件逐帧打印 */
