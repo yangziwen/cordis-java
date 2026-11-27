@@ -36,7 +36,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * SQLite（{@code <root>/memory.db}），所以<b>服务端重启后同一 session id
  * 依然能接上上回的对话</b>；{@code --session} 则每次显式指定。
  *
- * <p>内置命令：{@code /help}、{@code /health}、{@code /reset}、{@code /exit}。
+ * <p>内置命令：{@code /help}、{@code /health}、{@code /history}、{@code /reset}、
+ * {@code /exit}。
  */
 public final class AgentCli {
 
@@ -125,6 +126,7 @@ public final class AgentCli {
             }
             if ("/help".equals(message)) {
                 System.out.println("  /health  查看服务状态（模型、工具、技能数）");
+                System.out.println("  /history 回放本会话的问答历史（用户问题与模型终答）");
                 System.out.println("  /reset   清空本会话历史");
                 System.out.println("  /exit    退出");
                 System.out.println("  当前模式：" + (cli.stream
@@ -142,6 +144,10 @@ public final class AgentCli {
                 body.put("session", cli.session);
                 System.out.println(pretty(cli.post("/reset", body.toString())));
                 System.out.println();
+                continue;
+            }
+            if ("/history".equals(message)) {
+                cli.history();
                 continue;
             }
             cli.chat(message);
@@ -250,6 +256,30 @@ public final class AgentCli {
             System.out.println();
         } else if ("error".equals(type)) {
             System.out.println("[错误] " + event.path("message").asText());
+            System.out.println();
+        }
+    }
+
+    /**
+     * /history：拉取服务端库里的问答主干（qa=1）逐条回放——
+     * 也就是每轮发给模型的那份历史，工具过程不在其中。
+     */
+    private void history() {
+        ObjectNode body = JSON.createObjectNode();
+        body.put("session", session);
+        try {
+            JsonNode reply = post("/history", body.toString());
+            int count = reply.path("count").asInt(0);
+            System.out.println("会话 " + session + " 的问答历史，共 " + count + " 条：");
+            int index = 0;
+            for (JsonNode item : reply.path("messages")) {
+                String prefix = "user".equals(item.path("role").asText()) ? ". 你: " : ". 答: ";
+                System.out.println("  " + (++index) + prefix + item.path("content").asText());
+            }
+            System.out.println();
+        } catch (Exception e) {
+            System.out.println("[错误] " + e.getMessage()
+                    + "（server 起了吗？旧版本没有 /history）");
             System.out.println();
         }
     }

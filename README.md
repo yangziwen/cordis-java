@@ -498,6 +498,7 @@ java -cp "$CP" cordis.app.AgentServer [选项]
 | POST | `/chat` | `{"session":"可选","message":"...","stream":false}` → `{"session","answer","stopReason","steps","toolCalls","elapsedMs","events"}` |
 | POST | `/chat` | 加 `"stream":true` 或 `Accept: text/event-stream` → 逐帧 `data: {"type":...}` |
 | POST | `/reset` | `{"session":"..."}` 删除该会话的库内历史与内存缓存 |
+| POST | `/history` | `{"session":"..."}` → `{"session","count","messages":[{"role","content"}]}` 回放问答主干（qa=1，工具过程不返回） |
 
 SSE 帧类型：`step`（进入第 n 轮，带当前工具快照）、`tool_start`、`tool`（工具结果）、`final`、`error`。
 
@@ -512,7 +513,7 @@ java -cp "$CP" cordis.app.AgentCli [url] [--no-stream] [--session id] [--resume]
 ```
 
 默认读取 SSE 并逐帧输出；`--no-stream` 回退为一次性 JSON；`--session` 显式指定会话；
-`--resume` 续用上次保存的会话 id；内置 `/help` `/health` `/reset` `/exit`。
+`--resume` 续用上次保存的会话 id；内置 `/help` `/health` `/history` `/reset` `/exit`。
 
 ---
 

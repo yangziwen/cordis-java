@@ -83,6 +83,8 @@ import cordis.util.Maps;
  *       {@code Accept: text/event-stream}）→ 逐帧
  *       {@code data: {type:step|tool_start|tool|final|error,...}}</li>
  *   <li>{@code POST /reset} {"session":"..."} → 删除该会话的库内历史与缓存</li>
+ *   <li>{@code POST /history} {"session":"..."} → 该会话的问答主干
+ *       （qa=1：用户问题与模型终答；工具过程只存档、不在此返回）</li>
  * </ul>
  *
  * <h3>记忆与重启延续</h3>
@@ -292,7 +294,8 @@ public final class AgentServer implements AutoCloseable {
             http = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
             http.createContext("/health", this::handleHealth);
             http.createContext("/chat", this::handleChat);
-            http.createContext("/reset", this::handleReset);
+        http.createContext("/reset", this::handleReset);
+        http.createContext("/history", this::handleHistory);
             http.setExecutor(Executors.newFixedThreadPool(HTTP_THREADS, r -> {
                 Thread thread = new Thread(r, "agent-server-http");
                 thread.setDaemon(true);
@@ -437,6 +440,38 @@ public final class AgentServer implements AutoCloseable {
             write(exchange, 200, JSON.writeValueAsBytes(body));
         } catch (Exception e) {
             LOG.warn("reset failed", e);
+            writeError(exchange, 500, messageOf(e));
+        }
+    }
+
+    /**
+     * 回放会话的问答主干（qa=1）：用户问题与模型终答逐条返回。
+     * 直接读库（与重启后 /chat 的加载同源）；工具过程行不在其中。
+     */
+    private void handleHistory(HttpExchange exchange) {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeError(exchange, 405, "use POST");
+            return;
+        }
+        String session = "-";
+        try {
+            JsonNode request = JSON.readTree(readBody(exchange));
+            session = text(request, "session");
+            List<LlmMessage> history = session.isEmpty()
+                    ? new ArrayList<LlmMessage>()
+                    : memory.loadQaSync(session);
+            ObjectNode body = JSON.createObjectNode();
+            body.put("session", session);
+            body.put("count", history.size());
+            ArrayNode items = body.putArray("messages");
+            for (LlmMessage message : history) {
+                ObjectNode item = items.addObject();
+                item.put("role", message.role);
+                item.put("content", message.content);
+            }
+            write(exchange, 200, JSON.writeValueAsBytes(body));
+        } catch (Exception e) {
+            LOG.warn("history failed, session={}", session, e);
             writeError(exchange, 500, messageOf(e));
         }
     }
