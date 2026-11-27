@@ -1,6 +1,6 @@
 # cordis-java
 
-[cordis](https://github.com/cordiverse/cordis)架构的 **Java 8 实现**，并在此基础上构建一套可运行的 agent 基础设施：文件系统、SQLite、HTTP、SSE、技能（skill）、无头浏览器、模型工具调用循环，以及可直接启动服务的 `AgentServer`。
+[cordis](https://github.com/cordiverse/cordis)架构的Java实现，并在此基础上构建一套可运行的 agent 基础设施：文件系统、SQLite、HTTP、SSE、Skill、无头浏览器、模型工具调用循环，以及可直接启动服务的 `AgentServer`。
 
 - 语言差异的处理方式：TypeScript 依靠 Proxy 隐式解析服务，本实现改为显式 `ctx.get(name)`；TypeScript 以原生 Promise 表达异步，本实现提供绑定主循环的 `Promise` / `Deferred`。
 - 项目目标不是语法层面的翻译，而是完整保留 cordis 的**调度模型与生命周期语义**：主循环串行决策、阻塞任务 offload、依赖驱动挂载、effect 逆序回收、热插拔。
