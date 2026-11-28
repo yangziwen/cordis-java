@@ -2,12 +2,7 @@
 
 [Cordis](https://github.com/cordiverse/cordis) 架构的Java实现，并在此基础上构建一套可运行的 agent 基础设施：文件系统、SQLite、HTTP、SSE、Skill、无头浏览器、模型工具调用循环，以及可直接启动服务的 `AgentServer`。
 
-- 语言差异的处理方式：TypeScript 依靠 Proxy 隐式解析服务，本实现改为显式 `ctx.get(name)`；TypeScript 以原生 Promise 表达异步，本实现提供绑定主循环的 `Promise` / `Deferred`。
-- 项目目标不是语法层面的翻译，而是完整保留 cordis 的**调度模型与生命周期语义**：主循环串行决策、阻塞任务 offload、依赖驱动挂载、effect 逆序回收、热插拔。
-- 规模：107 个 Java 文件、约 1.5 万行；不依赖任何应用框架，第三方库共 6 个（见 [依赖](#依赖与版本选择)）。
-
-> 📘 **教程：从 0 构建一个 Agent** —— 13 章图文课程，从一次模型调用讲到服务化，每章聚焦一个方面（循环 / 工具 / 记忆 / 预算 / 权限），原理配示意图、代码只作锚点。
-> 入口：[course/README.md](course/README.md) · 推荐先读 [第 1 章](course/01-from-call-to-agent.md) 与 [第 7 章 agent loop](course/07-agent-loop.md)。
+📘 **教程：[从 0 构建一个 Agent](course/README.md)** —— 13 章内容，从一次模型调用讲到服务化，每章聚焦一个方面（循环 / 工具 / 记忆 / 预算 / 权限），原理配示意图、代码只作锚点。
 
 ---
 
