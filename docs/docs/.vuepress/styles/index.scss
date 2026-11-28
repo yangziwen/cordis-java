@@ -1,0 +1,14 @@
+html {
+    scroll-behavior: smooth;
+}
+
+// mermaid 图表：居中并自适应内容宽度
+.mermaid-diagram {
+    text-align: center;
+
+    svg {
+        display: inline-block;
+        max-width: 100%;
+        height: auto;
+    }
+}

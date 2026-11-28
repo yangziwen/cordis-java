@@ -118,3 +118,10 @@ local.properties
 
 .agent-cli-session
 agent-workspace/
+
+# VuePress docs
+docs/node_modules/
+docs/docs/.vuepress/dist/
+docs/docs/.vuepress/.cache/
+docs/docs/.vuepress/.temp/
+!docs/deploy.sh

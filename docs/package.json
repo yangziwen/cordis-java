@@ -1,0 +1,14 @@
+{
+  "devDependencies": {
+    "vuepress": "^1.9.10",
+    "vuepress-plugin-mermaidjs": "^1.0.1"
+  },
+  "scripts": {
+    "docs:sync": "mkdir -p docs/course && cp ../course/*.md docs/course/",
+    "docs:dev": "npm run docs:sync && export NODE_OPTIONS=--openssl-legacy-provider && vuepress dev docs",
+    "docs:build": "npm run docs:sync && export NODE_OPTIONS=--openssl-legacy-provider && vuepress build docs"
+  },
+  "overrides": {
+    "lodash.template": "4.4.0"
+  }
+}
